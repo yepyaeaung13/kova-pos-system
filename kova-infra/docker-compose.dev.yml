@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kova
+      POSTGRES_PASSWORD: kova_dev_password
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql:ro
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports: ["4222:4222", "8222:8222"]
+    volumes:
+      - nats_data:/data
+
+  gateway:
+    image: envoyproxy/envoy:v1.31-latest
+    ports: ["8080:8080"]
+    volumes:
+      - ./gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    depends_on: [postgres, nats]
+
+  kova-auth:
+    build:
+      context: ../kova-auth
+      dockerfile: Dockerfile
+    ports: ["8081:8081"]
+    environment:
+      DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_auth
+      JWT_SECRET: kova-dev-secret-change-in-production
+    depends_on: [postgres]
+
+  kova-sync:
+    build:
+      context: ../kova-sync
+      dockerfile: Dockerfile
+    ports: ["8082:8082"]
+    environment:
+      DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_sync
+    depends_on: [postgres]
+
+  kova-sale:
+    build:
+      context: ../kova-sale
+      dockerfile: Dockerfile
+    ports: ["8083:8083"]
+    environment:
+      DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_sale
+      NATS_URL: nats://nats:4222
+    depends_on: [postgres, nats]
+
+  kova-inventory:
+    build:
+      context: ../kova-inventory
+      dockerfile: Dockerfile
+    ports: ["8084:8084"]
+    environment:
+      DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_inventory
+      NATS_URL: nats://nats:4222
+    depends_on: [postgres, nats]
+
+  kova-accounting:
+    build:
+      context: ../kova-accounting
+      dockerfile: Dockerfile
+    ports: ["8085:8085"]
+    environment:
+      DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_accounting
+      NATS_URL: nats://nats:4222
+    depends_on: [postgres, nats]
+
+volumes:
+  pg_data:
+  nats_data:

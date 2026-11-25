@@ -1,0 +1,25 @@
+{
+  "name": "kova-erp-monorepo-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kova ERP — 8-repo polyrepo development workspace",
+  "workspaces": [
+    "kova-contracts",
+    "kova-auth",
+    "kova-sync",
+    "kova-sale",
+    "kova-inventory",
+    "kova-accounting"
+  ],
+  "scripts": {
+    "setup": "bash setup.sh",
+    "typecheck:all": "for d in kova-contracts kova-auth kova-sync kova-sale kova-inventory kova-accounting; do (cd $d && npm run typecheck) || exit 1; done",
+    "test:all": "for d in kova-contracts kova-auth kova-sync kova-sale kova-inventory kova-accounting; do (cd $d && npm test) || exit 1; done",
+    "build:all": "for d in kova-contracts kova-auth kova-sync kova-sale kova-inventory kova-accounting; do (cd $d && npm run build) || exit 1; done",
+    "infra:up": "cd kova-infra && docker compose -f docker-compose.dev.yml up -d",
+    "infra:down": "cd kova-infra && docker compose -f docker-compose.dev.yml down -v"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

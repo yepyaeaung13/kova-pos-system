@@ -1,0 +1,29 @@
+{
+  "name": "kova-inventory",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fastify": "^4.0.0",
+    "@fastify/type-provider-typebox": "^6.0.0",
+    "@sinclair/typebox": "^0.34.0",
+    "pg": "^8.11.0",
+    "nats": "^2.10.0",
+    "kysely": "^0.27.0",
+    "@kova/contracts": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}

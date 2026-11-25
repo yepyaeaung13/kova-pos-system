@@ -1,0 +1,78 @@
+static_resources:
+  listeners:
+  - name: listener_8080
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8080 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: kova_backend
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/api/v1/auth/" }
+                route: { cluster: auth_service }
+              - match: { prefix: "/.well-known/jwks.json" }
+                route: { cluster: auth_service }
+              - match: { prefix: "/api/v1/sync/" }
+                route: { cluster: sync_service }
+              - match: { prefix: "/api/v1/sale/" }
+                route: { cluster: sale_service }
+              - match: { prefix: "/api/v1/inventory/" }
+                route: { cluster: inventory_service }
+              - match: { prefix: "/api/v1/accounting/" }
+                route: { cluster: accounting_service }
+          http_filters:
+          - name: envoy.filters.http.router
+  clusters:
+  - name: auth_service
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: auth_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint: { address: { socket_address: { address: kova-auth, port_value: 8081 } } }
+  - name: sync_service
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: sync_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint: { address: { socket_address: { address: kova-sync, port_value: 8082 } } }
+  - name: sale_service
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: sale_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint: { address: { socket_address: { address: kova-sale, port_value: 8083 } } }
+  - name: inventory_service
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: inventory_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint: { address: { socket_address: { address: kova-inventory, port_value: 8084 } } }
+  - name: accounting_service
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: accounting_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint: { address: { socket_address: { address: kova-accounting, port_value: 8085 } } }
