@@ -1,0 +1,121 @@
+{
+  "name": "Kova ERP",
+  "id": "dev.kova.erp",
+  "version": "0.1.0",
+  "build": 1,
+  "nsh": ">=0.7",
+  "appearance": "light",
+  "capabilities": {
+    "application": true,
+    "process": { "execute": ["sqlite3"] },
+    "network": { "hosts": ["127.0.0.1", "localhost", "127.0.0.1:8080"] }
+  },
+  "window": {
+    "title": "Kova ERP",
+    "defaultSize": { "width": 1200, "height": 700 },
+    "minSize": { "width": 1100, "height": 640 }
+  },
+  "tailwind": {
+    "colors": {
+      "primary": "#932C10",
+      "on-primary": "#FFFFFF",
+      "primary-container": "#B44326",
+      "on-primary-container": "#FFE2DB",
+      "secondary": "#3F5E27",
+      "on-secondary": "#FFFFFF",
+      "secondary-container": "#EAF3E4",
+      "on-secondary-container": "#2A4417",
+      "tertiary": "#2F5372",
+      "on-tertiary": "#FFFFFF",
+      "tertiary-container": "#EAF1F7",
+      "on-tertiary-container": "#16334B",
+      "error": "#BA1A1A",
+      "on-error": "#FFFFFF",
+      "error-container": "#FCECEB",
+      "on-error-container": "#7A1010",
+      "amber": "#7E5700",
+      "on-amber": "#FFFFFF",
+      "amber-container": "#FBF3E0",
+      "on-amber-container": "#4A3200",
+      "plum": "#75376A",
+      "on-plum": "#FFFFFF",
+      "plum-container": "#F5ECF3",
+      "on-plum-container": "#471D40",
+      "background": "#FAF9F6",
+      "on-background": "#1F1B16",
+      "surface": "#FAF9F6",
+      "surface-dim": "#E5E2DA",
+      "surface-bright": "#FFFFFF",
+      "surface-container-lowest": "#FFFFFF",
+      "surface-container-low": "#F5F3EE",
+      "surface-container": "#EFEDE7",
+      "surface-container-high": "#E8E5DE",
+      "surface-container-highest": "#E0DDD5",
+      "on-surface": "#1F1B16",
+      "surface-variant": "#F7EDE9",
+      "on-surface-variant": "#58423C",
+      "outline": "#6B5752",
+      "outline-variant": "#E0DDD5",
+      "inverse-surface": "#2C2824",
+      "inverse-on-surface": "#FAF9F6",
+      "inverse-primary": "#FFB4A2"
+    },
+    "radius": { "sm": 6, "DEFAULT": 10, "md": 12, "lg": 16, "xl": 24, "full": 9999 },
+    "fontFamily": {
+      "display": "Kova Display, Fraunces, Georgia, serif",
+      "headline": "Kova Display, Fraunces, Georgia, serif",
+      "title": "Work Sans, Segoe UI, sans-serif",
+      "body": "Work Sans, Segoe UI, sans-serif",
+      "label": "Work Sans, Segoe UI, sans-serif",
+      "icon": "Material Symbols Outlined"
+    },
+    "fontSize": {
+      "display-lg": [36, 1.1667],
+      "display-lg-mobile": [28, 1.2143],
+      "headline-lg": [26, 1.2308],
+      "headline-md": [20, 1.3],
+      "title-lg": [18, 1.3333],
+      "title-md": [15, 1.3333],
+      "body-md": [14, 1.4286],
+      "body-sm": [12, 1.3333],
+      "label-lg": [14, 1.4286],
+      "label-md": [12, 1.3333],
+      "label-sm": [12, 1.1667]
+    },
+    "tracking": { "display": -0.014, "headline": -0.01, "label": 0.02 }
+  },
+  "theme": {
+    "cssVars": {
+      "theme": {
+        "font-sans": "Work Sans, sans-serif",
+        "radius": "10px"
+      },
+      "light": {
+        "background": "#FAF9F6",
+        "foreground": "#1F1B16",
+        "card": "#FFFFFF",
+        "card-foreground": "#1F1B16",
+        "popover": "#FFFFFF",
+        "popover-foreground": "#1F1B16",
+        "primary": "#932C10",
+        "primary-foreground": "#FFFFFF",
+        "secondary": "#F5F3EE",
+        "secondary-foreground": "#1F1B16",
+        "muted": "#F5F3EE",
+        "muted-foreground": "#58423C",
+        "accent": "#EAF3E4",
+        "accent-foreground": "#2A4417",
+        "destructive": "#BA1A1A",
+        "destructive-foreground": "#FFFFFF",
+        "border": "#E0DDD5",
+        "input": "#E0DDD5",
+        "ring": "#B44326",
+        "chart-1": "#B44326",
+        "chart-2": "#3F5E27",
+        "chart-3": "#2F5372",
+        "chart-4": "#7E5700",
+        "chart-5": "#75376A"
+      }
+    }
+  }
+}
