@@ -212,6 +212,7 @@ export interface Customer {
   name: string;
   initials: string;
   phone: string;
+  address: string;
   tier: "Bronze" | "Silver" | "Gold";
   stamps: number;
   visits: number;
@@ -221,11 +222,11 @@ export interface Customer {
 }
 
 export const customers: Customer[] = [
-  { id: "c-01", name: "Ayesha Khan", initials: "AK", phone: "+92 300 1234567", tier: "Gold", stamps: 8, visits: 64, spend: 2480.5, lastVisit: "Today", favorite: "Café Latte" },
-  { id: "c-02", name: "Bilal Ahmed", initials: "BA", phone: "+92 321 9876543", tier: "Silver", stamps: 5, visits: 38, spend: 1310.0, lastVisit: "Yesterday", favorite: "Flat White" },
-  { id: "c-03", name: "Sana Malik", initials: "SM", phone: "+92 333 4455667", tier: "Gold", stamps: 9, visits: 71, spend: 3105.75, lastVisit: "2 days ago", favorite: "Iced Mocha" },
-  { id: "c-04", name: "Hamza Riaz", initials: "HR", phone: "+92 345 1122334", tier: "Bronze", stamps: 2, visits: 9, spend: 268.4, lastVisit: "4 days ago", favorite: "Cold Brew" },
-  { id: "c-05", name: "Fatima Noor", initials: "FN", phone: "+92 302 7788990", tier: "Silver", stamps: 6, visits: 41, spend: 1588.2, lastVisit: "1 week ago", favorite: "Cappuccino" },
+  { id: "c-01", name: "Ayesha Khan", initials: "AK", phone: "+92 300 1234567", address: "Gulberg, Lahore", tier: "Gold", stamps: 8, visits: 64, spend: 2480.5, lastVisit: "Today", favorite: "Café Latte" },
+  { id: "c-02", name: "Bilal Ahmed", initials: "BA", phone: "+92 321 9876543", address: "Gulberg, Lahore", tier: "Silver", stamps: 5, visits: 38, spend: 1310.0, lastVisit: "Yesterday", favorite: "Flat White" },
+  { id: "c-03", name: "Sana Malik", initials: "SM", phone: "+92 333 4455667", address: "Gulberg, Lahore", tier: "Gold", stamps: 9, visits: 71, spend: 3105.75, lastVisit: "2 days ago", favorite: "Iced Mocha" },
+  { id: "c-04", name: "Hamza Riaz", initials: "HR", phone: "+92 345 1122334", address: "Gulberg, Lahore", tier: "Bronze", stamps: 2, visits: 9, spend: 268.4, lastVisit: "4 days ago", favorite: "Cold Brew" },
+  { id: "c-05", name: "Fatima Noor", initials: "FN", phone: "+92 302 7788990", address: "Gulberg, Lahore", tier: "Silver", stamps: 6, visits: 41, spend: 1588.2, lastVisit: "1 week ago", favorite: "Cappuccino" },
 ];
 
 export interface SaleRecord {

@@ -1,4 +1,4 @@
-import { Scroll, Text, View } from "nsh";
+import { Scroll, signal, Text, View } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
 import { Screen } from "../../ui/Screen";
@@ -6,7 +6,8 @@ import { CardHeader, Eyebrow, InfoRow, StatTile } from "../../ui/Card";
 import { ProgressBar } from "../../ui/Charts";
 import { StatusPill, type Tone } from "../../ui/Badge";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
-import { suppliers, type Supplier } from "../../data/ops";
+import { loadSuppliers, type Supplier } from "../../db/repo";
+import { suppliers as supplierFixtures } from "../../data/ops";
 import { money } from "../../format";
 
 const toneFor: Record<Supplier["audit"], Tone> = {
@@ -16,7 +17,10 @@ const toneFor: Record<Supplier["audit"], Tone> = {
 };
 
 export function SuppliersScreen() {
-  const payable = () => suppliers.reduce((sum, supplier) => sum + supplier.payable, 0);
+  const supplierList = signal<Supplier[]>([...supplierFixtures]);
+  void loadSuppliers().then((rows) => supplierList.set(rows)).catch(() => undefined);
+
+  const payable = () => supplierList().reduce((sum, supplier) => sum + supplier.payable, 0);
 
   return (
     <Screen
@@ -31,7 +35,7 @@ export function SuppliersScreen() {
       }
     >
       <View class="flex-row gap-3">
-        <StatTile label="Active suppliers" value={String(suppliers.length)} hint="40 SKUs covered" icon="local_shipping" />
+        <StatTile label="Active suppliers" value={String(supplierList().length)} hint="40 SKUs covered" icon="local_shipping" />
         <StatTile label="Payable" value={money(payable())} hint="across 4 open bills" icon="request_quote" tone="warn" />
         <StatTile label="On-time delivery" value="94%" delta="+2.1%" positive hint="last 30 days" icon="schedule" tone="success" />
         <StatTile label="Audits overdue" value="1" hint="Bar Essentials" icon="gpp_maybe" tone="plum" />
@@ -50,7 +54,7 @@ export function SuppliersScreen() {
               <HeadCell label="Last delivery" flex={1.2} />
               <HeadCell label="Audit" flex={1.1} />
             </Head>
-            <Each of={suppliers}>
+            <Each of={supplierList()}>
               {(supplier) => (
                 <Row>
                   <Cell flex={2.2}>
@@ -65,15 +69,15 @@ export function SuppliersScreen() {
                     </View>
                   </Cell>
                   <Cell flex={1.8}>
-                    <Text class="font-body text-body-md text-on-surface-variant truncate">{supplier().contact}</Text>
+                    <Text class="font-body text-body-md text-on-surface-variant truncate">{supplier().contact_name}</Text>
                   </Cell>
-                  <TextCell text={supplier().leadDays + "d"} w={56} align="right" muted />
+                  <TextCell text={supplier().lead_days + "d"} w={56} align="right" muted />
                   <Cell flex={1.4}>
                     <View class="w-full gap-1">
                       <Text class="font-label text-label-sm tabular-nums text-on-surface">
                         {supplier().rating.toFixed(1)} / 5
                       </Text>
-                      <ProgressBar value={supplier().rating / 5} height={4} color="#3F5E27" />
+                      <ProgressBar value={supplier().rating / 5} height={4} color="#3F5727" />
                     </View>
                   </Cell>
                   <TextCell text={String(supplier().items)} w={52} align="right" muted />
@@ -84,12 +88,12 @@ export function SuppliersScreen() {
                         (supplier().payable > 0 ? "text-on-surface" : "text-outline")
                       }
                     >
-                      {supplier().payable > 0 ? money(supplier().payable) : "—"}
+                      {supplier().payable > 0 ? money(supplier().payable) : "-"}
                     </Text>
                   </Cell>
-                  <TextCell text={supplier().lastDelivery} flex={1.2} muted />
+                  <TextCell text={supplier().last_delivery} flex={1.2} muted />
                   <Cell flex={1.1}>
-                    <StatusPill label={supplier().audit} tone={toneFor[supplier().audit]} />
+                    <StatusPill label={supplier().audit} tone={toneFor[supplier().audit as Supplier["audit"]]} />
                   </Cell>
                 </Row>
               )}

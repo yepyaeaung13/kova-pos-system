@@ -1,9 +1,7 @@
-import { Scroll, signal, Text, View } from "nsh";
+import { Overlay, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
-import { Chip, StatusPill } from "../../ui/Badge";
-import { StatTile } from "../../ui/Card";
+import { StatusPill } from "../../ui/Badge";
 import { ProgressBar } from "../../ui/Charts";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { Drawer } from "../../ui/Drawer";
@@ -46,6 +44,8 @@ function at(iso: string): string {
 
 export function StockItemsScreen() {
   const filter = signal<(typeof filters)[number]>("All");
+  const filterOpen = signal(false);
+  const filterAnchor = signal<ViewRef | null>(null);
   const selected = signal<string | null>(null);
   const ledger = signal<LedgerRow[]>([]);
   const parText = signal("");
@@ -101,49 +101,88 @@ export function StockItemsScreen() {
   };
 
   return (
-    <Screen
-      scroll={false}
-      title="Stock items"
-      subtitle="Counts, costs, par levels and the movement ledger"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">Stock items</Text>
+          <Text class="font-body text-body-sm text-outline">
+            Counts, costs, par levels and the movement ledger
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Export" icon="download" />
           <Button label="New item" icon="add" variant="primary" onPress={() => navigate("add-stock-item")} />
-        </>
-      }
-    >
-      <View class="flex-row gap-3">
-        <StatTile label="SKUs tracked" value={count(inventory().length)} hint="4 categories" icon="qr_code_2" />
-        <StatTile label="Value on hand" value={money(totalValue())} hint="moving average" icon="payments" tone="success" />
-        <StatTile
-          label="Below par"
-          value={count(inventory().filter((item) => item.status !== "OK").length)}
-          hint="includes out of stock"
-          icon="warning"
-          tone="warn"
-        />
-        <StatTile label="Suppliers" value="5" hint="3 active this week" icon="local_shipping" tone="info" />
+        </View>
       </View>
 
-      <View class="flex-row items-center gap-2">
-        <Each of={filters}>
-          {(name) => (
-            <Chip
-              label={name()}
-              selected={filter() === name()}
-              count={
-                name() === "All"
-                  ? inventory().length
-                  : inventory().filter((item) => item.category === name()).length
-              }
-              onPress={() => filter.set(name())}
-            />
-          )}
-        </Each>
-        <View class="flex-1" />
-        <Text class="font-body text-body-sm text-outline tabular-nums">
-          {visible().length} items · {money(totalValue())} on hand
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          SKUs tracked {count(inventory().length)}
         </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Value on hand {money(totalValue())}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Below par {count(inventory().filter((item) => item.status !== "OK").length)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Suppliers 5</Text>
+      </View>
+
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Category</Text>
+        <View class="w-40">
+          <View
+            ref={(node) => filterAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter category"
+            onPress={() => filterOpen.set(!filterOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{filter()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={filterOpen()}>
+            <Overlay
+              anchor={filterAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => filterOpen.set(false)}
+            >
+              <View class="w-40 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+                <Each of={filters}>
+                  {(name) => (
+                    <View
+                      role="button"
+                      accessibilityLabel={"Filter by " + name()}
+                      onPress={() => {
+                        filter.set(name());
+                        filterOpen.set(false);
+                      }}
+                      class={
+                        "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                        (filter() === name()
+                          ? "bg-surface-variant"
+                          : "hover:bg-surface-container-low")
+                      }
+                    >
+                      <Text class="font-body text-body-sm text-on-surface">{name()}</Text>
+                      <Text class="font-label text-label-sm tabular-nums text-outline">
+                        {name() === "All"
+                          ? inventory().length
+                          : inventory().filter((item) => item.category === name()).length}
+                      </Text>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline tabular-nums">
+          Showing {visible().length} of {inventory().length} items · {money(totalValue())} on hand
+        </Text>
+        <View class="flex-1" />
       </View>
 
       <TableWrap class="flex-1 min-h-0">
@@ -207,7 +246,7 @@ export function StockItemsScreen() {
         </Scroll>
       </TableWrap>
 
-      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-4 py-2.5">
+      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-3 py-1.5">
         <View class="flex-row items-center gap-2">
           <Icon name="swap_horiz" size={16} color="#6B5752" />
           <Text class="font-body text-body-sm text-outline">
@@ -343,6 +382,6 @@ export function StockItemsScreen() {
           );
         }}
       </If>
-    </Screen>
+    </View>
   );
 }

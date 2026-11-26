@@ -95,17 +95,17 @@ export function OrdersScreen() {
                             selected.set(order().id);
                             done.set("");
                           }}
-                          class="flex-row items-start justify-between gap-2"
+                          class="flex-row items-start justify-between gap-2 min-w-0"
                         >
-                          <View class="gap-0">
-                            <Text class="font-title text-title-md tabular-nums text-on-surface">
+                          <View class="gap-0 min-w-0 flex-1">
+                            <Text class="font-title text-title-md tabular-nums text-on-surface truncate">
                               #{order().id}
                             </Text>
-                            <Text class="font-body text-body-sm text-outline">
+                            <Text class="font-body text-body-sm text-outline truncate">
                               {order().table} · {order().channel} · {order().placed}
                             </Text>
                           </View>
-                          <View class="flex-row items-center gap-1.5">
+                          <View class="flex-row items-center gap-1.5 shrink-0">
                             <Text class="font-label text-label-md tabular-nums text-on-surface">
                               {money(order().total)}
                             </Text>
@@ -118,7 +118,7 @@ export function OrdersScreen() {
                             {(item) => (
                               <View class="flex-row items-start gap-1.5">
                                 <View class="mt-1.5 h-1 w-1 rounded-full bg-outline" />
-                                <Text class="flex-1 font-body text-body-sm text-on-surface-variant">
+                                <Text class="flex-1 font-body text-body-sm text-on-surface-variant break-words min-w-0">
                                   {item()}
                                 </Text>
                               </View>
@@ -131,6 +131,7 @@ export function OrdersScreen() {
                             label={nextLabel[order().status]}
                             size="sm"
                             variant={order().status === "Ready" ? "primary" : "secondary"}
+                            class="whitespace-normal text-center"
                             onPress={() => advanceOrder(order().id)}
                           />
                         </If>
@@ -140,6 +141,7 @@ export function OrdersScreen() {
                             size="sm"
                             variant="ghost"
                             iconRight="arrow_forward"
+                            class="whitespace-normal text-center"
                             onPress={() => navigate("invoice")}
                           />
                         </If>
@@ -267,6 +269,7 @@ export function OrdersScreen() {
                   <Button
                     label={"Advance · " + nextLabel[order.status]}
                     variant={order.status === "Ready" ? "primary" : "secondary"}
+                    class="whitespace-normal"
                     onPress={() => {
                       advanceOrder(order.id);
                       done.set("Moved to " + nextLabel[order.status].toLowerCase() + ".");

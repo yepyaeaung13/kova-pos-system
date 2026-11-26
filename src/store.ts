@@ -26,6 +26,7 @@ import {
   setConfig,
   writeSale,
   type ExpenseRow,
+  type JournalLineInput,
   type JournalRow,
   type VendorBillRow,
 } from "./db/repo";
@@ -570,7 +571,9 @@ export async function hydrateInventory(): Promise<void> {
           par,
           unitCost: Number(row.cost_cents) / 100,
           supplier:
-            stockItems.find((item) => item.sku === row.sku)?.supplier ?? "—",
+            row.supplier_name ??
+            stockItems.find((item) => item.sku === row.sku)?.supplier ??
+            "-",
           status: stockStatus(onHand, par),
         };
       }),
@@ -637,6 +640,39 @@ export function markJournalPosted(ref: string): void {
   postedDrafts.update((map) => ({ ...map, [ref]: true }));
   recentJournal.update((list) =>
     list.map((entry) => (entry.ref === ref ? { ...entry, status: "Posted" } : entry)),
+  );
+}
+
+/** Drafts discarded in this session, hidden from the list. */
+export const discardedJournal = signal<Record<string, boolean>>({});
+
+export function discardJournalEntry(ref: string): void {
+  discardedJournal.update((map) => ({ ...map, [ref]: true }));
+  recentJournal.update((list) => list.filter((entry) => entry.ref !== ref));
+}
+
+/** The structured lines behind drafts saved in this session. */
+export const draftLines = signal<Record<string, JournalLineInput[]>>({});
+
+export function rememberDraftLines(ref: string, lines: JournalLineInput[]): void {
+  draftLines.update((map) => ({ ...map, [ref]: lines }));
+}
+
+export function forgetDraftLines(ref: string): void {
+  draftLines.update((map) => {
+    const next = { ...map };
+    delete next[ref];
+    return next;
+  });
+}
+
+/** Edits a listed entry after its lines or memo change. */
+export function amendJournalEntry(
+  ref: string,
+  patch: Partial<Omit<JournalRow, "ref">>,
+): void {
+  recentJournal.update((list) =>
+    list.map((entry) => (entry.ref === ref ? { ...entry, ...patch } : entry)),
   );
 }
 

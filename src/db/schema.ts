@@ -211,7 +211,22 @@ CREATE TABLE IF NOT EXISTS inv_recipes (
   id TEXT PRIMARY KEY,
   product_id TEXT UNIQUE NOT NULL,
   product_name TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  price_cents INTEGER NOT NULL DEFAULT 0,
+  cost_cents INTEGER NOT NULL DEFAULT 0,
+  margin INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS inv_transfers (
+  id TEXT PRIMARY KEY,
+  transfer_no TEXT UNIQUE NOT NULL,
+  from_branch TEXT NOT NULL,
+  to_branch TEXT NOT NULL,
+  items_qty INTEGER NOT NULL DEFAULT 0,
+  value_cents INTEGER NOT NULL DEFAULT 0,
+  sent_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'In transit'
 );
 
 CREATE TABLE IF NOT EXISTS inv_recipe_lines (
@@ -254,6 +269,24 @@ CREATE TABLE IF NOT EXISTS inv_adjustments (
   notes TEXT,
   created_at TEXT NOT NULL
 );
+`;
+
+const transferStatus = `
+CREATE TABLE IF NOT EXISTS inv_transfers (
+  id TEXT PRIMARY KEY,
+  transfer_no TEXT UNIQUE NOT NULL,
+  from_branch TEXT NOT NULL,
+  to_branch TEXT NOT NULL,
+  items_qty INTEGER NOT NULL DEFAULT 0,
+  value_cents INTEGER NOT NULL DEFAULT 0,
+  sent_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'In transit'
+);
+
+INSERT OR IGNORE INTO inv_transfers (id, transfer_no, from_branch, to_branch, items_qty, value_cents, sent_at, status) VALUES
+  (lower('trf-2026-0032'), 'TRF-2026-0032', 'Gulberg Café', 'DHA Phase 5', 3, 18420, '2026-11-26T07:00:00Z', 'In transit'),
+  (lower('trf-2026-0031'), 'TRF-2026-0031', 'Gulberg Café', 'Johar Town', 5, 31280, '2026-11-25T18:30:00Z', 'Received'),
+  (lower('trf-2026-0030'), 'TRF-2026-0030', 'DHA Phase 5', 'Gulberg Café', 2, 9600, '2026-11-22T10:15:00Z', 'Received');
 `;
 
 const accounting = `
@@ -401,6 +434,19 @@ const journalStatus = `
 ALTER TABLE acc_journal_entries ADD COLUMN status TEXT NOT NULL DEFAULT 'Posted';
 `;
 
+const supplierAudit = `
+ALTER TABLE inv_suppliers ADD COLUMN lead_days INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE inv_suppliers ADD COLUMN rating REAL NOT NULL DEFAULT 0;
+ALTER TABLE inv_suppliers ADD COLUMN last_delivery TEXT NOT NULL DEFAULT '';
+ALTER TABLE inv_suppliers ADD COLUMN payable REAL NOT NULL DEFAULT 0;
+ALTER TABLE inv_suppliers ADD COLUMN audit TEXT NOT NULL DEFAULT 'Verified';
+ALTER TABLE inv_suppliers ADD COLUMN items INTEGER NOT NULL DEFAULT 0;
+`;
+
+const itemSupplier = `
+ALTER TABLE inv_items ADD COLUMN supplier_id TEXT;
+`;
+
 export const migrations: Migration[] = [
   { id: 1, name: "001_sync", sql: sync },
   { id: 2, name: "002_sale_pos", sql: sale },
@@ -416,4 +462,7 @@ export const migrations: Migration[] = [
   { id: 12, name: "012_expense_coding", sql: expenseCoding },
   { id: 13, name: "013_gst_opening", sql: gstOpening },
   { id: 14, name: "014_journal_status", sql: journalStatus },
+  { id: 15, name: "015_inv_transfers", sql: transferStatus },
+  { id: 16, name: "016_supplier_audit", sql: supplierAudit },
+  { id: 17, name: "017_item_supplier", sql: itemSupplier },
 ];

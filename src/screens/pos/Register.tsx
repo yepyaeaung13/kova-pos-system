@@ -216,6 +216,10 @@ export function RegisterScreen() {
   const sheet = signal<{ productId: string; lineId: string | null } | null>(null);
   const selection = signal<Record<string, string[]>>({});
   const picker = signal(false);
+  const newMemberOpen = signal(false);
+  const newMemberName = signal("");
+  const newMemberPhone = signal("");
+  const newMemberAddress = signal("");
   const heldOpen = signal(false);
   const splitOpen = signal(false);
   const splitIds = signal<string[]>([]);
@@ -906,9 +910,80 @@ export function RegisterScreen() {
             <Text class="font-body text-body-sm text-outline">
               Members earn 1 point per $1 spent.
             </Text>
-            <View class="flex-row items-center gap-2">
+            <View
+              role="button"
+              accessibilityLabel="New member"
+              onPress={() => newMemberOpen.set(true)}
+              class="flex-row items-center gap-2"
+            >
               <Icon name="person_add" size={16} color="#6B5752" />
               <Text class="font-label text-label-md text-primary">New member</Text>
+            </View>
+          </View>
+        </Modal>
+      </If>
+
+      {/* New member */}
+      <If when={newMemberOpen()}>
+        <Modal onClose={() => newMemberOpen.set(false)} width={420}>
+          <View class="gap-3 p-4">
+            <Text class="font-title text-title-lg text-on-surface">New member</Text>
+            <TextBox
+              value={newMemberName()}
+              onChange={(value) => newMemberName.set(value)}
+              placeholder="Full name"
+              icon="person"
+            />
+            <TextBox
+              value={newMemberPhone()}
+              onChange={(value) => newMemberPhone.set(value)}
+              placeholder="Phone number"
+              icon="call"
+            />
+            <TextBox
+              value={newMemberAddress()}
+              onChange={(value) => newMemberAddress.set(value)}
+              placeholder="Address"
+              icon="location_on"
+            />
+            <View class="flex-row justify-end gap-2">
+              <Button label="Cancel" onPress={() => newMemberOpen.set(false)} />
+              <Button
+                label="Add member"
+                variant="primary"
+                icon="person_add"
+                onPress={() => {
+                  const name = newMemberName().trim();
+                  if (!name) return;
+                  const initials = name
+                    .split(/\s+/)
+                    .map((part) => part[0] ?? "")
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase();
+                  const customer = {
+                    id: "c-" + Date.now(),
+                    name,
+                    initials: initials || "?",
+                    phone: newMemberPhone().trim() || "-",
+                    address: newMemberAddress().trim() || "-",
+                    tier: "Bronze" as const,
+                    stamps: 0,
+                    visits: 0,
+                    spend: 0,
+                    lastVisit: "Today",
+                    favorite: "-",
+                  };
+                  customers.push(customer);
+                  activeCustomer.set(customer);
+                  customerQuery.set("");
+                  newMemberName.set("");
+                  newMemberPhone.set("");
+                  newMemberAddress.set("");
+                  newMemberOpen.set(false);
+                  picker.set(false);
+                }}
+              />
             </View>
           </View>
         </Modal>

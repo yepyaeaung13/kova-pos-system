@@ -1,8 +1,7 @@
-import { computed, Scroll, signal, Text, View } from "nsh";
+import { computed, Overlay, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Chip, StatusPill, type Tone } from "../../ui/Badge";
-import { StatTile } from "../../ui/Card";
+import { StatusPill, type Tone } from "../../ui/Badge";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { Drawer } from "../../ui/Drawer";
 import { ApprovalModal } from "../../ui/ApprovalModal";
@@ -17,7 +16,7 @@ import {
 import { invoiceLines, refundInvoice, voidInvoice } from "../../db/repo";
 import { syncState } from "../../sync/state";
 import { sales, type SaleRecord } from "../../data/mock";
-import { money, count } from "../../format";
+import { money } from "../../format";
 
 const tabs = ["All", "Paid", "Refunded", "Void"] as const;
 
@@ -38,6 +37,8 @@ interface StoredLine {
 
 export function SalesScreen() {
   const tab = signal<(typeof tabs)[number]>("All");
+  const tabOpen = signal(false);
+  const tabAnchor = signal<ViewRef | null>(null);
   const selected = signal<SaleRecord | null>(null);
   const lines = signal<StoredLine[]>([]);
   const mode = signal<"detail" | "refund">("detail");
@@ -52,13 +53,16 @@ export function SalesScreen() {
   const statusOf = (sale: SaleRecord): SaleRecord["status"] =>
     saleStatusOverride()[sale.invoice] ?? sale.status;
 
-  const rows = computed(() => {
-    const query = searchQuery().trim().toLowerCase();
-    const all = [...recentSales(), ...sales].map((sale) => ({
+  const allRows = computed(() =>
+    [...recentSales(), ...sales].map((sale) => ({
       ...sale,
       status: statusOf(sale),
-    }));
-    return all.filter((sale) => {
+    })),
+  );
+
+  const rows = computed(() => {
+    const query = searchQuery().trim().toLowerCase();
+    return allRows().filter((sale) => {
       const inTab = tab() === "All" || sale.status === tab();
       const inQuery =
         query === "" ||
@@ -154,7 +158,7 @@ export function SalesScreen() {
   };
 
   return (
-    <View class="flex-1 flex-col gap-4 p-6 min-h-0" style={{ position: "relative" }}>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0" style={{ position: "relative" }}>
       <View class="flex-row items-center justify-between gap-3">
         <View class="gap-0.5">
           <Text class="font-headline text-headline-lg text-on-surface">Sales</Text>
@@ -169,28 +173,77 @@ export function SalesScreen() {
         </View>
       </View>
 
-      <View class="flex-row gap-3">
-        <StatTile label="Gross taken" value={money(totals().gross)} delta="+18.2%" positive hint="vs yesterday" icon="payments" />
-        <StatTile label="Refunds" value={money(totals().refunds)} delta="−0.6%" positive hint="2 of 186" icon="undo" tone="warn" />
-        <StatTile label="Net sales" value={money(totals().net)} delta="+17.4%" positive hint="after refunds" icon="account_balance_wallet" tone="success" />
-        <StatTile label="Invoices" value={count(rows().length)} hint="this session + history" icon="description" tone="info" />
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Gross taken {money(totals().gross)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Refunds {money(totals().refunds)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Net sales {money(totals().net)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Invoices {rows().length}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">This terminal · All cashiers</Text>
       </View>
 
-      <View class="flex-row items-center gap-2">
-        <Each of={tabs}>
-          {(name) => (
-            <Chip label={name()} selected={tab() === name()} onPress={() => tab.set(name())} />
-          )}
-        </Each>
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Status</Text>
+        <View class="w-36">
+          <View
+            ref={(node) => tabAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter status"
+            onPress={() => tabOpen.set(!tabOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{tab()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={tabOpen()}>
+            <Overlay
+              anchor={tabAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => tabOpen.set(false)}
+            >
+              <View class="w-36 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+                <Each of={tabs}>
+                  {(name) => (
+                    <View
+                      role="button"
+                      accessibilityLabel={"Filter by " + name()}
+                      onPress={() => {
+                        tab.set(name());
+                        tabOpen.set(false);
+                      }}
+                      class={
+                        "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                        (tab() === name()
+                          ? "bg-surface-variant"
+                          : "hover:bg-surface-container-low")
+                      }
+                    >
+                      <Text class="font-body text-body-sm text-on-surface">{name()}</Text>
+                      <Text class="font-label text-label-sm tabular-nums text-outline">
+                        {name() === "All"
+                          ? allRows().length
+                          : allRows().filter((sale) => sale.status === name()).length}
+                      </Text>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline">
+          Showing {rows().length} of {allRows().length} invoices
+        </Text>
         <View class="flex-1" />
-        <View class="flex-row items-center gap-1.5 rounded border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5">
-          <Icon name="filter_list" size={16} color="#6B5752" />
-          <Text class="font-label text-label-sm text-on-surface-variant">This terminal</Text>
-        </View>
-        <View class="flex-row items-center gap-1.5 rounded border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5">
-          <Icon name="person" size={16} color="#6B5752" />
-          <Text class="font-label text-label-sm text-on-surface-variant">All cashiers</Text>
-        </View>
       </View>
 
       <TableWrap class="flex-1 min-h-0">

@@ -62,11 +62,11 @@
     },
     "radius": { "sm": 6, "DEFAULT": 10, "md": 12, "lg": 16, "xl": 24, "full": 9999 },
     "fontFamily": {
-      "display": "Kova Display, Fraunces, Georgia, serif",
-      "headline": "Kova Display, Fraunces, Georgia, serif",
-      "title": "Work Sans, Segoe UI, sans-serif",
-      "body": "Work Sans, Segoe UI, sans-serif",
-      "label": "Work Sans, Segoe UI, sans-serif",
+      "display": "Inter, Segoe UI, sans-serif",
+      "headline": "Inter, Segoe UI, sans-serif",
+      "title": "Inter, Segoe UI, sans-serif",
+      "body": "Inter, Segoe UI, sans-serif",
+      "label": "Inter, Segoe UI, sans-serif",
       "icon": "Material Symbols Outlined"
     },
     "fontSize": {
@@ -87,7 +87,7 @@
   "theme": {
     "cssVars": {
       "theme": {
-        "font-sans": "Work Sans, sans-serif",
+        "font-sans": "Inter, sans-serif",
         "radius": "10px"
       },
       "light": {

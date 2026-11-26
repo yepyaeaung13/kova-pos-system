@@ -1,22 +1,38 @@
 import { Scroll, signal, Text, View } from "nsh";
 import { Icon } from "../../ui/Icon";
-import { Button } from "../../ui/Button";
+import { Button, IconButton } from "../../ui/Button";
 import { Screen } from "../../ui/Screen";
 import { Chip, StatusPill } from "../../ui/Badge";
 import { StatTile } from "../../ui/Card";
 import { Drawer } from "../../ui/Drawer";
 import { Field, TextBox } from "../../ui/Field";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
-import { recentJournal, recordJournalEntry, postedDrafts, markJournalPosted } from "../../store";
+import {
+  amendJournalEntry,
+  discardedJournal,
+  discardJournalEntry,
+  draftLines,
+  forgetDraftLines,
+  markJournalPosted,
+  postedDrafts,
+  recentJournal,
+  recordJournalEntry,
+  rememberDraftLines,
+} from "../../store";
 import { accounts, journal, type Account, type JournalEntry } from "../../data/ops";
 import {
+  discardJournalDraft,
   initDb,
   loadAccounts,
   loadJournal,
+  loadJournalLines,
   nextJournalNo,
   postDraftJournalEntry,
   postJournalEntry,
+  reverseJournalEntry,
   saveJournalDraft,
+  updateJournalDraft,
+  type JournalLineInput,
 } from "../../db/repo";
 import { journalFromRow, mergeJournal } from "../../journal";
 import { money } from "../../format";
@@ -28,9 +44,8 @@ export function JournalScreen() {
   const persisted = signal<JournalEntry[]>([]);
   const books = signal<Account[]>(accounts);
   const formOpen = signal(false);
-  const debitCode = signal("1200");
-  const creditCode = signal("1010");
-  const amountText = signal("");
+  const editingRef = signal<string | null>(null);
+  const amounts = signal<Record<string, { debit: string; credit: string }>>({});
   const memo = signal("");
   const formError = signal("");
   const notice = signal("");
@@ -56,9 +71,10 @@ export function JournalScreen() {
 
   const all = () => {
     const overrides = postedDrafts();
-    return mergeJournal(persisted(), recentJournal().map(journalFromRow), journal).map(
-      (entry) => (overrides[entry.ref] ? { ...entry, status: "Posted" } : entry),
-    );
+    const discarded = discardedJournal();
+    return mergeJournal(persisted(), recentJournal().map(journalFromRow), journal)
+      .filter((entry) => !discarded[entry.ref])
+      .map((entry) => (overrides[entry.ref] ? { ...entry, status: "Posted" } : entry));
   };
 
   const rows = () => all().filter((entry) => tab() === "All" || entry.status === tab());
@@ -67,76 +83,188 @@ export function JournalScreen() {
       .filter((entry) => entry.status === "Posted")
       .reduce((sum, entry) => sum + entry.amount, 0);
 
-  const accountByCode = (code: string) => books().find((account) => account.code === code);
-  const labelFor = (code: string) => {
-    const account = accountByCode(code);
-    return account ? account.code + " " + account.name : code;
+  /** Parses a typed amount into cents; blank or junk reads as zero. */
+  const parseCents = (text: string) => {
+    const value = Math.round(Number(text.replace(/[^0-9.]/g, "")) * 100);
+    return Number.isFinite(value) && value > 0 ? value : 0;
   };
 
+  const amountOf = (code: string, side: "debit" | "credit") => {
+    const entry = amounts()[code];
+    if (!entry) return "";
+    return side === "debit" ? entry.debit : entry.credit;
+  };
+
+  const setAmount = (code: string, side: "debit" | "credit", value: string) => {
+    amounts.update((map) => {
+      const current = map[code] ?? { debit: "", credit: "" };
+      return { ...map, [code]: { ...current, [side]: value } };
+    });
+  };
+
+  /** Every account with a typed amount, as a journal line. */
+  const formLines = () =>
+    books()
+      .map((account) => ({
+        accountCode: account.code,
+        accountName: account.name,
+        debitCents: parseCents(amountOf(account.code, "debit")),
+        creditCents: parseCents(amountOf(account.code, "credit")),
+      }))
+      .filter((line) => line.debitCents > 0 || line.creditCents > 0);
+
+  const debitTotal = () => formLines().reduce((sum, line) => sum + line.debitCents, 0);
+  const creditTotal = () => formLines().reduce((sum, line) => sum + line.creditCents, 0);
+  const difference = () => debitTotal() - creditTotal();
+  const balanced = () => debitTotal() > 0 && difference() === 0;
+
   const openForm = () => {
-    debitCode.set("1200");
-    creditCode.set("1010");
-    amountText.set("");
+    amounts.set({});
     memo.set("");
     formError.set("");
     notice.set("");
+    editingRef.set(null);
     formOpen.set(true);
   };
 
+  /** Turns structured lines into grid cell text. */
+  const fillAmounts = (lines: JournalLineInput[]) => {
+    const next: Record<string, { debit: string; credit: string }> = {};
+    for (const line of lines) {
+      next[line.accountCode] = {
+        debit: line.debitCents > 0 ? (line.debitCents / 100).toFixed(2) : "",
+        credit: line.creditCents > 0 ? (line.creditCents / 100).toFixed(2) : "",
+      };
+    }
+    amounts.set(next);
+  };
+
+  const editDraft = (ref: string) => {
+    const entry = all().find((item) => item.ref === ref);
+    amounts.set({});
+    memo.set(entry ? entry.description : "");
+    formError.set("");
+    notice.set("");
+    editingRef.set(ref);
+    formOpen.set(true);
+
+    const remember = draftLines()[ref];
+    if (remember && remember.length > 0) {
+      fillAmounts(remember);
+      return;
+    }
+    void loadJournalLines(ref)
+      .then((lines) => {
+        if (editingRef() === ref && formOpen()) fillAmounts(lines);
+      })
+      .catch(() => undefined);
+  };
+
+  /** Keeps the persisted and session copies in step after an edit. */
+  const applyEdit = (
+    ref: string,
+    status: "Draft" | "Posted",
+    total: number,
+    description: string,
+    debit: string,
+    credit: string,
+  ) => {
+    persisted.update((list) =>
+      list.map((entry) =>
+        entry.ref === ref
+          ? { ...entry, status, amount: total / 100, description, debit, credit }
+          : entry,
+      ),
+    );
+    amendJournalEntry(ref, {
+      status,
+      amount_cents: total,
+      description,
+      debit,
+      credit,
+    });
+  };
+
   const submit = (asDraft: boolean) => {
-    const amount = Math.round(Number(amountText().replace(/[^0-9.]/g, "")) * 100);
-    const debit = accountByCode(debitCode());
-    const credit = accountByCode(creditCode());
-    if (!debit || !credit) {
-      formError.set("Pick a debit and a credit account.");
+    const lines = formLines();
+    if (!lines.some((line) => line.debitCents > 0) || !lines.some((line) => line.creditCents > 0)) {
+      formError.set("Add at least one debit line and one credit line.");
       return;
     }
-    if (debit.code === credit.code) {
-      formError.set("Debit and credit must be different accounts.");
+    if (lines.some((line) => line.debitCents > 0 && line.creditCents > 0)) {
+      formError.set("An account can only be on one side of an entry.");
       return;
     }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      formError.set("Enter an amount greater than zero.");
+    if (!balanced()) {
+      formError.set("Debits and credits must balance.");
       return;
     }
 
-    const entryNo = nextJournalNo();
+    const total = debitTotal();
     const postedAt = new Date().toISOString();
     const description = memo().trim() || "Manual journal entry";
+    const names = (side: "debit" | "credit") =>
+      lines
+        .filter((line) => (side === "debit" ? line.debitCents : line.creditCents) > 0)
+        .map((line) => line.accountCode + " " + line.accountName)
+        .join(" + ");
+
+    const editing = editingRef();
+    const entryNo = editing ?? nextJournalNo();
+    const entry = {
+      entryNo,
+      memo: description,
+      lines: lines.map((line) => ({
+        accountCode: line.accountCode,
+        debitCents: line.debitCents,
+        creditCents: line.creditCents,
+      })),
+      postedAt,
+    };
+
+    if (editing) {
+      rememberDraftLines(editing, entry.lines);
+      applyEdit(editing, asDraft ? "Draft" : "Posted", total, description, names("debit"), names("credit"));
+      if (asDraft) {
+        void updateJournalDraft(entry).catch((error) => {
+          console.log("journal draft not updated in sqlite: " + (error?.message ?? error));
+        });
+        notice.set("Draft updated · " + editing);
+      } else {
+        markJournalPosted(editing);
+        void updateJournalDraft(entry)
+          .then(() => postDraftJournalEntry(editing))
+          .catch((error) => {
+            console.log("journal draft not posted in sqlite: " + (error?.message ?? error));
+          });
+        notice.set("Journal entry posted · " + editing + " · " + money(total / 100));
+      }
+      editingRef.set(null);
+      formOpen.set(false);
+      return;
+    }
+
     recordJournalEntry({
       ref: entryNo,
       description,
       posted_at: postedAt,
-      debit: debit.code + " " + debit.name,
-      credit: credit.code + " " + credit.name,
-      amount_cents: amount,
+      debit: names("debit"),
+      credit: names("credit"),
+      amount_cents: total,
       status: asDraft ? "Draft" : "Posted",
     });
 
     if (asDraft) {
-      void saveJournalDraft({
-        entryNo,
-        memo: description,
-        debitCode: debit.code,
-        creditCode: credit.code,
-        amountCents: amount,
-        postedAt,
-      }).catch((error) => {
+      rememberDraftLines(entryNo, entry.lines);
+      void saveJournalDraft(entry).catch((error) => {
         console.log("journal draft not written to sqlite: " + (error?.message ?? error));
       });
       notice.set("Draft saved · " + entryNo);
     } else {
-      void postJournalEntry({
-        entryNo,
-        memo: description,
-        debitCode: debit.code,
-        creditCode: credit.code,
-        amountCents: amount,
-        postedAt,
-      }).catch((error) => {
+      void postJournalEntry(entry).catch((error) => {
         console.log("journal entry not written to sqlite: " + (error?.message ?? error));
       });
-      notice.set("Journal entry posted · " + entryNo + " · " + money(amount / 100));
+      notice.set("Journal entry posted · " + entryNo + " · " + money(total / 100));
     }
 
     formOpen.set(false);
@@ -153,6 +281,35 @@ export function JournalScreen() {
   const postFirstDraft = () => {
     const draft = all().find((entry) => entry.status === "Draft");
     if (draft) postDraft(draft.ref);
+  };
+
+  const discardDraft = (ref: string) => {
+    discardJournalEntry(ref);
+    forgetDraftLines(ref);
+    notice.set("Draft discarded · " + ref);
+    void discardJournalDraft(ref).catch((error) => {
+      console.log("journal draft not discarded in sqlite: " + (error?.message ?? error));
+    });
+  };
+
+  const reverseEntry = (ref: string) => {
+    const original = all().find((entry) => entry.ref === ref);
+    if (!original) return;
+    const reversalNo = nextJournalNo();
+    const postedAt = new Date().toISOString();
+    recordJournalEntry({
+      ref: reversalNo,
+      description: "Reversal of " + ref,
+      posted_at: postedAt,
+      debit: original.credit,
+      credit: original.debit,
+      amount_cents: Math.round(original.amount * 100),
+      status: "Posted",
+    });
+    notice.set("Reversal posted · " + reversalNo + " · " + money(original.amount));
+    void reverseJournalEntry({ entryNo: ref, reversalNo, postedAt }).catch((error) => {
+      console.log("journal reversal not written to sqlite: " + (error?.message ?? error));
+    });
   };
 
   return (
@@ -214,7 +371,7 @@ export function JournalScreen() {
             <HeadCell label="Credit" flex={1.7} />
             <HeadCell label="Amount" flex={1} align="right" />
             <HeadCell label="Status" flex={0.9} />
-            <HeadCell label="" w={70} />
+            <HeadCell label="" w={120} />
           </Head>
           <Each of={rows()}>
             {(entry) => (
@@ -234,16 +391,41 @@ export function JournalScreen() {
                 <Cell flex={0.9}>
                   <StatusPill label={entry().status} tone={entry().status === "Posted" ? "success" : "warn"} />
                 </Cell>
-                <Cell w={70} align="right">
-                  <If when={entry().status === "Draft"}>
-                    <Button
-                      label="Post"
-                      size="sm"
-                      variant="soft"
-                      a11yLabel={"Post " + entry().ref}
-                      onPress={() => postDraft(entry().ref)}
-                    />
-                  </If>
+                <Cell w={120} align="right">
+                  <View class="flex-row items-center justify-end gap-1">
+                    <If when={entry().status === "Draft"}>
+                      <Button
+                        label="Post"
+                        size="sm"
+                        variant="soft"
+                        a11yLabel={"Post " + entry().ref}
+                        onPress={() => postDraft(entry().ref)}
+                      />
+                      <IconButton
+                        icon="edit"
+                        size={28}
+                        variant="ghost"
+                        label={"Edit " + entry().ref}
+                        onPress={() => editDraft(entry().ref)}
+                      />
+                      <IconButton
+                        icon="delete"
+                        size={28}
+                        variant="ghost"
+                        label={"Discard " + entry().ref}
+                        onPress={() => discardDraft(entry().ref)}
+                      />
+                    </If>
+                    <If when={entry().status === "Posted"}>
+                      <IconButton
+                        icon="undo"
+                        size={28}
+                        variant="ghost"
+                        label={"Reverse " + entry().ref}
+                        onPress={() => reverseEntry(entry().ref)}
+                      />
+                    </If>
+                  </View>
                 </Cell>
               </Row>
             )}
@@ -264,39 +446,46 @@ export function JournalScreen() {
       <If when={formOpen()}>
         <Drawer
           title="New journal entry"
-          subtitle="Pick the debit and credit accounts; they must balance"
-          width={560}
+          subtitle="Add debit and credit lines; they must balance"
+          width={620}
           onClose={() => formOpen.set(false)}
         >
           <View class="flex-1 min-h-0">
             <Scroll class="flex-1">
               <View class="gap-4 p-4">
-                <View class="flex-row gap-2 rounded-md border border-outline-variant bg-surface-container-low p-3">
-                  <View class="flex-1 gap-0 min-w-0">
-                    <Text class="font-label text-label-sm uppercase tracking-label text-outline">Debit</Text>
-                    <Text class="font-label text-label-md text-on-surface truncate">{labelFor(debitCode())}</Text>
-                  </View>
-                  <View class="flex-1 gap-0 min-w-0">
-                    <Text class="font-label text-label-sm uppercase tracking-label text-outline">Credit</Text>
-                    <Text class="font-label text-label-md text-on-surface truncate">{labelFor(creditCode())}</Text>
-                  </View>
-                </View>
+                <Field label="Description">
+                  <TextBox
+                    value={memo()}
+                    onChange={(value) => memo.set(value)}
+                    placeholder="Description"
+                  />
+                </Field>
 
-                <View class="flex-row gap-3">
-                  <Field label="Amount" class="flex-1">
-                    <TextBox
-                      value={amountText()}
-                      onChange={(value) => amountText.set(value)}
-                      placeholder="Amount"
-                    />
-                  </Field>
-                  <Field label="Description" class="flex-1">
-                    <TextBox
-                      value={memo()}
-                      onChange={(value) => memo.set(value)}
-                      placeholder="Description"
-                    />
-                  </Field>
+                <View class="flex-row items-center gap-3 rounded-md border border-outline-variant bg-surface-container-low p-3">
+                  <View class="flex-1 gap-0">
+                    <Text class="font-label text-label-sm uppercase tracking-label text-outline">Debits</Text>
+                    <Text class="font-label text-label-md tabular-nums text-on-surface">
+                      {money(debitTotal() / 100)}
+                    </Text>
+                  </View>
+                  <View class="flex-1 gap-0">
+                    <Text class="font-label text-label-sm uppercase tracking-label text-outline">Credits</Text>
+                    <Text class="font-label text-label-md tabular-nums text-on-surface">
+                      {money(creditTotal() / 100)}
+                    </Text>
+                  </View>
+                  <View class="flex-1 gap-0">
+                    <Text class="font-label text-label-sm uppercase tracking-label text-outline">Difference</Text>
+                    <Text
+                      class={
+                        "font-label text-label-md tabular-nums " +
+                        (difference() === 0 ? "text-on-surface" : "text-error")
+                      }
+                    >
+                      {money(Math.abs(difference()) / 100)}
+                    </Text>
+                  </View>
+                  <StatusPill label={balanced() ? "Balanced" : "Unbalanced"} tone={balanced() ? "success" : "warn"} />
                 </View>
 
                 <View class="gap-1">
@@ -304,8 +493,8 @@ export function JournalScreen() {
                     <Text class="flex-1 font-label text-label-sm uppercase tracking-label text-outline">
                       Account
                     </Text>
-                    <Text class="w-8 text-center font-label text-label-sm text-outline">Dr</Text>
-                    <Text class="w-8 text-center font-label text-label-sm text-outline">Cr</Text>
+                    <Text class="w-32 text-center font-label text-label-sm text-outline">Debit</Text>
+                    <Text class="w-32 text-center font-label text-label-sm text-outline">Credit</Text>
                   </View>
                   <Each of={books()}>
                     {(account) => (
@@ -316,46 +505,20 @@ export function JournalScreen() {
                           </Text>
                           <Text class="font-body text-body-sm text-outline">{account().type}</Text>
                         </View>
-                        <View
-                          role="button"
-                          accessibilityLabel={"Debit " + account().code}
-                          onPress={() => debitCode.set(account().code)}
-                          class={
-                            "h-7 w-8 items-center justify-center rounded-sm border " +
-                            (debitCode() === account().code
-                              ? "border-primary bg-primary"
-                              : "border-outline-variant bg-surface-container-lowest")
-                          }
-                        >
-                          <Text
-                            class={
-                              "font-label text-label-sm " +
-                              (debitCode() === account().code ? "text-on-primary" : "text-on-surface-variant")
-                            }
-                          >
-                            D
-                          </Text>
-                        </View>
-                        <View
-                          role="button"
-                          accessibilityLabel={"Credit " + account().code}
-                          onPress={() => creditCode.set(account().code)}
-                          class={
-                            "h-7 w-8 items-center justify-center rounded-sm border " +
-                            (creditCode() === account().code
-                              ? "border-secondary bg-secondary"
-                              : "border-outline-variant bg-surface-container-lowest")
-                          }
-                        >
-                          <Text
-                            class={
-                              "font-label text-label-sm " +
-                              (creditCode() === account().code ? "text-on-secondary" : "text-on-surface-variant")
-                            }
-                          >
-                            C
-                          </Text>
-                        </View>
+                        <TextBox
+                          value={amountOf(account().code, "debit")}
+                          onChange={(value) => setAmount(account().code, "debit", value)}
+                          placeholder="0.00"
+                          a11yLabel={"Debit " + account().code}
+                          class="w-32"
+                        />
+                        <TextBox
+                          value={amountOf(account().code, "credit")}
+                          onChange={(value) => setAmount(account().code, "credit", value)}
+                          placeholder="0.00"
+                          a11yLabel={"Credit " + account().code}
+                          class="w-32"
+                        />
                       </View>
                     )}
                   </Each>
@@ -374,9 +537,16 @@ export function JournalScreen() {
                 a11yLabel="Post entry"
                 variant="primary"
                 grow
+                disabled={!balanced()}
                 onPress={() => submit(false)}
               />
-              <Button label="Save draft" a11yLabel="Save draft" grow onPress={() => submit(true)} />
+              <Button
+                label="Save draft"
+                a11yLabel="Save draft"
+                grow
+                disabled={!balanced()}
+                onPress={() => submit(true)}
+              />
             </View>
           </View>
         </Drawer>

@@ -1,7 +1,7 @@
-import { computed, Scroll, signal, Text, View } from "nsh";
+import { computed, Overlay, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Chip, StatusPill } from "../../ui/Badge";
+import { StatusPill } from "../../ui/Badge";
 import { StatTile } from "../../ui/Card";
 import { ProductArt } from "../../ui/ProductArt";
 import { Drawer } from "../../ui/Drawer";
@@ -10,7 +10,6 @@ import { Toggle } from "../../ui/Avatar";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { addProduct, addToCart, catalog, navigate, searchQuery } from "../../store";
 import { upsertProductRow } from "../../db/repo";
-import { categories } from "../../data/mock";
 import type { Category, Product } from "../../data/mock";
 import { money, count } from "../../format";
 
@@ -20,9 +19,12 @@ const tints = ["#F7EDE9", "#F5F3EE", "#EAF1F7", "#FBF3E0", "#F5ECF3", "#EAF3E4"]
 
 export function ProductsScreen() {
   const filter = signal<(typeof filters)[number]>("All");
+  const filterOpen = signal(false);
+  const filterAnchor = signal<ViewRef | null>(null);
   const selected = signal<Product | null>(null);
   const creating = signal(false);
   const saving = signal(false);
+  const categoryOpen = signal(false);
 
   const name = signal("");
   const note = signal("");
@@ -97,7 +99,7 @@ export function ProductsScreen() {
   };
 
   return (
-    <View class="flex-1 flex-col gap-4 p-6 min-h-0" style={{ position: "relative" }}>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0" style={{ position: "relative" }}>
       <View class="flex-row items-center justify-between gap-3">
         <View class="gap-0.5">
           <Text class="font-headline text-headline-lg text-on-surface">Products</Text>
@@ -111,42 +113,76 @@ export function ProductsScreen() {
         </View>
       </View>
 
-      <View class="flex-row gap-3">
-        <StatTile label="Menu items" value={count(catalog().length)} hint="across 4 categories" icon="inventory_2" />
-        <StatTile
-          label="Average price"
-          value={money(catalog().reduce((sum, p) => sum + p.price, 0) / Math.max(1, catalog().length))}
-          hint="incl. tax"
-          icon="sell"
-          tone="info"
-        />
-        <StatTile label="Sold today" value={count(soldToday())} delta="+12.4%" positive hint="vs yesterday" icon="local_fire_department" tone="warn" />
-        <StatTile
-          label="Unavailable"
-          value={count(catalog().filter((p) => p.badge === "Sold out").length)}
-          hint="sold out right now"
-          icon="block"
-          tone="plum"
-        />
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Menu items {count(catalog().length)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Avg {money(catalog().reduce((sum, p) => sum + p.price, 0) / Math.max(1, catalog().length))}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Sold today {count(soldToday())}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Sold out {count(catalog().filter((p) => p.badge === "Sold out").length)}
+        </Text>
       </View>
 
-      <View class="flex-row items-center gap-2">
-        <Each of={filters}>
-          {(item) => (
-            <Chip
-              label={item()}
-              selected={filter() === item()}
-              count={
-                item() === "All"
-                  ? catalog().length
-                  : catalog().filter((product) => product.category === item()).length
-              }
-              onPress={() => filter.set(item())}
-            />
-          )}
-        </Each>
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Category</Text>
+        <View class="w-48">
+          <View
+            ref={(node) => filterAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter category"
+            onPress={() => filterOpen.set(!filterOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{filter()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={filterOpen()}>
+            <Overlay
+              anchor={filterAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => filterOpen.set(false)}
+            >
+            <View class="w-48 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+              <Each of={filters}>
+                {(item) => (
+                  <View
+                    role="button"
+                    accessibilityLabel={"Filter by " + item()}
+                    onPress={() => {
+                      filter.set(item());
+                      filterOpen.set(false);
+                    }}
+                    class={
+                      "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                      (filter() === item()
+                        ? "bg-surface-variant"
+                        : "hover:bg-surface-container-low")
+                    }
+                  >
+                    <Text class="font-body text-body-sm text-on-surface">{item()}</Text>
+                    <Text class="font-label text-label-sm tabular-nums text-outline">
+                      {item() === "All"
+                        ? catalog().length
+                        : catalog().filter((product) => product.category === item()).length}
+                    </Text>
+                  </View>
+                )}
+              </Each>
+            </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline">
+          Showing {visible().length} of {catalog().length} items
+        </Text>
         <View class="flex-1" />
-        <Button label="Edit categories" size="sm" variant="ghost" icon="tune" />
       </View>
 
       <TableWrap class="flex-1 min-h-0">
@@ -215,19 +251,6 @@ export function ProductsScreen() {
         <Text class="font-body text-body-sm text-outline">
           {visible().length} of {catalog().length} items · edits reach the register and the local database
         </Text>
-        <View class="flex-row items-center gap-3">
-          <Text class="font-label text-label-sm uppercase tracking-label text-outline">
-            Categories
-          </Text>
-          <Each of={categories}>
-            {(entry) => (
-              <View class="flex-row items-center gap-1">
-                <Text class="font-body text-body-sm text-on-surface">{entry().name}</Text>
-                <Text class="font-label text-label-sm tabular-nums text-outline">{entry().count}</Text>
-              </View>
-            )}
-          </Each>
-        </View>
       </View>
 
       <If when={selected() !== null || creating()}>
@@ -258,23 +281,39 @@ export function ProductsScreen() {
             </Field>
 
             <Field label="Category">
-              <View class="flex-row gap-1.5 flex-wrap">
-                <Each of={filters.slice(1)}>
-                  {(item) => (
-                    <View
-                      role="button"
-                      onPress={() => category.set(item() as Category)}
-                      class={
-                        "rounded-full border px-2.5 py-1 " +
-                        (category() === item()
-                          ? "border-primary-container bg-surface-variant"
-                          : "border-outline-variant bg-surface-container-lowest")
-                      }
-                    >
-                      <Text class="font-label text-label-sm text-on-surface">{item()}</Text>
-                    </View>
-                  )}
-                </Each>
+              <View class="rounded-md border border-outline-variant bg-surface-container-lowest">
+                <View
+                  role="button"
+                  accessibilityLabel="Select category"
+                  onPress={() => categoryOpen.set(!categoryOpen())}
+                  class="flex-row items-center justify-between px-3 py-2.5"
+                >
+                  <Text class="font-body text-body-md text-on-surface">{category()}</Text>
+                  <Icon name="expand_more" size={18} color="#6B5752" />
+                </View>
+                <If when={categoryOpen()}>
+                  <View class="border-t border-outline-variant">
+                    <Each of={filters.slice(1)}>
+                      {(item) => (
+                        <View
+                          role="button"
+                          onPress={() => {
+                            category.set(item() as Category);
+                            categoryOpen.set(false);
+                          }}
+                          class={
+                            "px-3 py-2 " +
+                            (category() === item()
+                              ? "bg-surface-variant"
+                              : "hover:bg-surface-container-low")
+                          }
+                        >
+                          <Text class="font-body text-body-md text-on-surface">{item()}</Text>
+                        </View>
+                      )}
+                    </Each>
+                  </View>
+                </If>
               </View>
             </Field>
 

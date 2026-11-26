@@ -70,6 +70,7 @@ export function TextBox(props: {
   icon?: string;
   masked?: boolean;
   class?: string;
+  a11yLabel?: string;
 }) {
   return (
     <View
@@ -86,7 +87,7 @@ export function TextBox(props: {
         onChange={(e) => props.onChange(e.value)}
         placeholder={props.placeholder}
         masked={props.masked}
-        accessibilityLabel={props.placeholder}
+        accessibilityLabel={props.a11yLabel ?? props.placeholder}
         class="flex-1 font-body text-body-md text-on-surface"
         style={{ padding: 0 }}
       />

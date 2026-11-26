@@ -1,13 +1,12 @@
 import { Text, View } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
 import { CardHeader, Eyebrow, InfoRow } from "../../ui/Card";
 import { StatusPill } from "../../ui/Badge";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { Field } from "../../ui/Field";
-import { applyStockDelta, navigate } from "../../store";
-import { nextGrnNo, receiveGoods } from "../../db/repo";
+import { applyStockDelta, navigate, recordGoodsReceipt, stamp } from "../../store";
+import { nextGrnNo, nextJournalNo, receiveGoods } from "../../db/repo";
 import { money } from "../../format";
 
 const lines = [
@@ -22,13 +21,55 @@ export function GoodsReceivedScreen() {
   const tax = () => Math.round(subtotal() * 0.08 * 100) / 100;
 
   const post = () => {
-    const number = nextGrnNo();
+    const grnNo = nextGrnNo();
+    const entryNo = nextJournalNo();
+    const receivedAt = new Date().toISOString();
+    const subtotalCents = lines.reduce((sum, line) => sum + Math.round(line.received * line.cost * 100), 0);
+    const taxCents = Math.round(subtotalCents * 0.08);
+    const totalCents = subtotalCents + taxCents;
+    const total = totalCents / 100;
+    const dueDate = new Date(Date.parse(receivedAt) + 7 * 86_400_000).toISOString();
     for (const line of lines) applyStockDelta(line.sku, line.received);
+    recordGoodsReceipt(
+      {
+        number: grnNo,
+        supplier: "Nestl� Dairy",
+        po: "PO-2026-0142",
+        received: "Today � " + (stamp().split(" � ")[1] ?? ""),
+        lines: lines.length,
+        total,
+        invoice: "INV-88214",
+        status: "Posted",
+      },
+      "PO-2026-0142",
+      {
+        id: "",
+        bill_no: "INV-88214",
+        supplier: "Nestl� Dairy",
+        grn_no: grnNo,
+        due_date: dueDate,
+        total_cents: totalCents,
+        paid_cents: 0,
+        status: "Open",
+        payment_entry: null,
+      },
+      {
+        ref: entryNo,
+        description: "Goods received � " + grnNo,
+        posted_at: receivedAt,
+        debit: taxCents > 0 ? "1200 Inventory + 2100 Sales tax payable" : "1200 Inventory",
+        credit: "2000 Accounts payable",
+        amount_cents: totalCents,
+        status: "Posted",
+      },
+    );
     void receiveGoods({
-      grnNo: number,
+      grnNo,
       supplierId: "sup-2",
       invoiceNo: "INV-88214",
-      receivedAt: new Date().toISOString(),
+      receivedAt,
+      poNo: "PO-2026-0142",
+      entryNo,
       lines: lines.map((line) => ({
         sku: line.sku,
         qty: line.received,
@@ -41,20 +82,22 @@ export function GoodsReceivedScreen() {
   };
 
   return (
-    <Screen
-      scroll={false}
-      title="Goods received invoice"
-      subtitle="GRN-2026-0119 · receiving against PO-2026-0142"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">Goods received invoice</Text>
+          <Text class="font-body text-body-sm text-outline">
+            GRN-2026-0119 · receiving against PO-2026-0142
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Cancel" onPress={post} />
           <Button label="Post receipt" icon="check" variant="primary" onPress={post} />
-        </>
-      }
-    >
-      <View class="flex-1 flex-row gap-4 min-h-0">
-        <View class="flex-1 gap-4">
-          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
+        </View>
+      </View>
+      <View class="flex-1 flex-row gap-3 min-h-0">
+        <View class="flex-1 gap-3">
+          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-3">
             <View class="flex-row items-center justify-between">
               <CardHeader title="Supplier & documents" hint="Matches the delivery note" />
               <StatusPill label="2 lines short" tone="warn" />
@@ -62,7 +105,7 @@ export function GoodsReceivedScreen() {
             <View class="flex-row gap-3">
               <View class="flex-1">
                 <Field label="Supplier">
-                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2.5">
+                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2">
                     <Text class="font-body text-body-md text-on-surface">Nestlé Dairy</Text>
                     <Icon name="expand_more" size={18} color="#6B5752" />
                   </View>
@@ -70,7 +113,7 @@ export function GoodsReceivedScreen() {
               </View>
               <View class="flex-1">
                 <Field label="Purchase order">
-                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2.5">
+                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2">
                     <Text class="font-body text-body-md tabular-nums text-on-surface">PO-2026-0142</Text>
                     <Icon name="link" size={16} color="#6B5752" />
                   </View>
@@ -78,7 +121,7 @@ export function GoodsReceivedScreen() {
               </View>
               <View class="flex-1">
                 <Field label="Supplier invoice no.">
-                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2.5">
+                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2">
                     <Text class="font-body text-body-md tabular-nums text-on-surface">INV-88214</Text>
                     <Icon name="edit" size={15} color="#6B5752" />
                   </View>
@@ -88,7 +131,7 @@ export function GoodsReceivedScreen() {
             <View class="flex-row gap-3">
               <View class="flex-1">
                 <Field label="Received">
-                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2.5">
+                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2">
                     <Text class="font-body text-body-md tabular-nums text-on-surface">25 Nov 2026 · 7:35 AM</Text>
                     <Icon name="calendar_today" size={16} color="#6B5752" />
                   </View>
@@ -96,7 +139,7 @@ export function GoodsReceivedScreen() {
               </View>
               <View class="flex-1">
                 <Field label="Payment terms">
-                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2.5">
+                  <View class="flex-row items-center justify-between rounded border border-outline-variant bg-surface-container-low px-3 py-2">
                     <Text class="font-body text-body-md text-on-surface">Net 7 days</Text>
                     <Icon name="expand_more" size={18} color="#6B5752" />
                   </View>
@@ -106,7 +149,7 @@ export function GoodsReceivedScreen() {
           </View>
 
           <TableWrap class="flex-1">
-            <View class="flex-row items-center justify-between px-4 py-3">
+            <View class="flex-row items-center justify-between px-3 py-2">
               <CardHeader title="Received lines" hint="Ordered vs delivered" />
               <Button label="Add line" size="sm" variant="ghost" icon="add" />
             </View>
@@ -145,7 +188,7 @@ export function GoodsReceivedScreen() {
                 </Row>
               )}
             </Each>
-            <View class="flex-row items-center justify-between border-t border-outline-variant bg-surface-container-low px-4 py-2.5">
+            <View class="flex-row items-center justify-between border-t border-outline-variant bg-surface-container-low px-3 py-2">
               <Text class="font-body text-body-sm text-outline">
                 4 lines · 2 received short · backorder created for 6 L oat milk
               </Text>
@@ -155,7 +198,7 @@ export function GoodsReceivedScreen() {
         </View>
 
         <View class="gap-3" style={{ width: 330 }}>
-          <View class="gap-2.5 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
+          <View class="gap-2.5 rounded-md border border-outline-variant bg-surface-container-lowest p-3">
             <CardHeader title="Totals" hint="Supplier invoice values" />
             <InfoRow label={"Subtotal · " + lines.length + " lines"} value={money(subtotal())} />
             <InfoRow label="GST (8%)" value={money(tax())} />
@@ -165,7 +208,7 @@ export function GoodsReceivedScreen() {
             </View>
           </View>
 
-          <View class="gap-2.5 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
+          <View class="gap-2.5 rounded-md border border-outline-variant bg-surface-container-lowest p-3">
             <CardHeader title="3-way match" hint="PO · receipt · invoice" />
             <View class="flex-row items-center justify-between border-t border-outline-variant/60 pt-2">
               <Text class="font-body text-body-md text-on-surface">Ordered value</Text>
@@ -187,7 +230,7 @@ export function GoodsReceivedScreen() {
             </View>
           </View>
 
-          <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-low p-4">
+          <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-low p-3">
             <Eyebrow label="On posting" />
             <Text class="font-body text-body-sm text-on-surface-variant">
               Inventory goes up by the received value, accounts payable by the invoice
@@ -197,6 +240,6 @@ export function GoodsReceivedScreen() {
           </View>
         </View>
       </View>
-    </Screen>
+    </View>
   );
 }

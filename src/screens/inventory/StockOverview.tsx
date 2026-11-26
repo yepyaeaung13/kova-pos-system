@@ -7,7 +7,9 @@ import { ProgressBar } from "../../ui/Charts";
 import { StatusPill } from "../../ui/Badge";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { inventory, navigate, switchApp } from "../../store";
-import { adjustments, grns, suppliers, type StockStatus } from "../../data/ops";
+import { adjustments as adjustmentFixtures, grns as grnFixtures, suppliers as supplierFixtures, type StockStatus } from "../../data/ops";
+import { loadSuppliers, loadGrns, type Supplier, type GrnRow } from "../../db/repo";
+import { signal } from "nsh";
 import { money, count } from "../../format";
 
 const toneFor: Record<StockStatus, "success" | "warn" | "error"> = {
@@ -18,6 +20,11 @@ const toneFor: Record<StockStatus, "success" | "warn" | "error"> = {
 };
 
 export function StockOverviewScreen() {
+  const supplierList = signal<Supplier[]>([...supplierFixtures]);
+  const grnList = signal<GrnRow[]>([]);
+  void loadSuppliers().then((rows) => supplierList.set(rows)).catch(() => undefined);
+  void loadGrns(3).then((rows) => grnList.set(rows)).catch(() => undefined);
+
   const value = () => inventory().reduce((sum, item) => sum + item.onHand * item.unitCost, 0);
   const low = () => inventory().filter((item) => item.status !== "OK").length;
   const out = () => inventory().filter((item) => item.status === "Out").length;
@@ -91,7 +98,7 @@ export function StockOverviewScreen() {
         <View class="gap-3" style={{ width: 360 }}>
           <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
             <CardHeader title="Next deliveries" hint="This week" />
-            <Each of={suppliers.slice(0, 3)}>
+            <Each of={supplierList().slice(0, 3)}>
               {(supplier) => (
                 <View class="flex-row items-center justify-between gap-2 border-t border-outline-variant/60 pt-2.5">
                   <View class="flex-row items-center gap-2">
@@ -101,11 +108,11 @@ export function StockOverviewScreen() {
                     <View class="gap-0">
                       <Text class="font-label text-label-md text-on-surface">{supplier().name}</Text>
                       <Text class="font-body text-body-sm text-outline">
-                        {supplier().leadDays}-day lead · {supplier().items} SKUs
+                        {supplier().lead_days}-day lead · {supplier().items} SKUs
                       </Text>
                     </View>
                   </View>
-                  <Text class="font-label text-label-sm tabular-nums text-outline">{supplier().lastDelivery}</Text>
+                  <Text class="font-label text-label-sm tabular-nums text-outline">{supplier().last_delivery}</Text>
                 </View>
               )}
             </Each>
@@ -113,20 +120,20 @@ export function StockOverviewScreen() {
 
           <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
             <CardHeader title="Last stock movements" hint="Adjustments & receipts" />
-            <Each of={adjustments.slice(0, 3)}>
+            <Each of={adjustmentFixtures.slice(0, 3)}>
               {(row) => (
                 <View class="flex-row items-center justify-between gap-2 border-t border-outline-variant/60 pt-2">
                   <View class="gap-0">
-                    <Text class="font-label text-label-md tabular-nums text-on-surface">{row().number}</Text>
-                    <Text class="font-body text-body-sm text-outline">{row().reason} · {row().by}</Text>
+                    <Text class="font-label text-label-md tabular-nums text-on-surface">{row().adj_no}</Text>
+                    <Text class="font-body text-body-sm text-outline">{row().reason} · {row().branch_id}</Text>
                   </View>
                   <Text
                     class={
                       "font-label text-label-md tabular-nums " +
-                      (row().value < 0 ? "text-error" : "text-secondary")
+                      (row().delta_qty < 0 ? "text-error" : "text-secondary")
                     }
                   >
-                    {row().value < 0 ? "−" : "+"}{money(Math.abs(row().value))}
+                    {row().delta_qty < 0 ? "−" : "+"}{money(Math.abs(row().delta_qty))}
                   </Text>
                 </View>
               )}
@@ -135,9 +142,9 @@ export function StockOverviewScreen() {
 
           <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-low p-4">
             <Eyebrow label="Latest receipt" />
-            <Text class="font-title text-title-md text-on-surface">{grns[0].number}</Text>
+            <Text class="font-title text-title-md text-on-surface">{grnList().length > 0 ? grnList()[0].number : "—"}</Text>
             <Text class="font-body text-body-sm text-on-surface-variant">
-              {grns[0].supplier} · {grns[0].lines} lines · {money(grns[0].total)}
+              {grnList().length > 0 ? grnList()[0].supplier + " · " + grnList()[0].lines + " lines · " + money(grnList()[0].total_cents / 100) : "No receipts yet"}
             </Text>
             <Button label="Open goods received" size="sm" variant="ghost" iconRight="arrow_forward" onPress={() => navigate("grn-history")} />
           </View>

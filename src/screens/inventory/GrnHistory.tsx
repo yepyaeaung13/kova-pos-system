@@ -1,13 +1,14 @@
-import { Scroll, signal, Text, View } from "nsh";
+import { Overlay, Scroll, signal, Text, View, type ViewRef } from "nsh";
+import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
 import { StatusPill, type Tone } from "../../ui/Badge";
-import { StatTile } from "../../ui/Card";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import { navigate, recentGrns } from "../../store";
 import { grns, type Grn, type GrnStatus } from "../../data/ops";
 import { loadGrns, type GrnRow } from "../../db/repo";
 import { money } from "../../format";
+
+const filters = ["All", "Posted", "Draft", "Disputed"] as const;
 
 const toneFor: Record<GrnStatus, Tone> = {
   Posted: "success",
@@ -46,6 +47,9 @@ function fromRow(row: GrnRow): Grn {
 }
 
 export function GrnHistoryScreen() {
+  const filter = signal<(typeof filters)[number]>("All");
+  const filterOpen = signal(false);
+  const filterAnchor = signal<ViewRef | null>(null);
   const persisted = signal<Grn[]>([]);
   void loadGrns()
     .then((rows) => {
@@ -66,23 +70,88 @@ export function GrnHistoryScreen() {
     return merged;
   };
 
+  const filtered = () =>
+    rows().filter((grn) => filter() === "All" || grn.status === filter());
+
   return (
-    <Screen
-      scroll={false}
-      title="Goods received"
-      subtitle="Every delivery captured against a purchase order"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">Goods received</Text>
+          <Text class="font-body text-body-sm text-outline">
+            Every delivery captured against a purchase order
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Export" icon="download" />
           <Button label="Receive goods" icon="add" variant="primary" onPress={() => navigate("purchases")} />
-        </>
-      }
-    >
-      <View class="flex-row gap-3">
-        <StatTile label="Received this week" value="5" hint="4 suppliers" icon="local_shipping" />
-        <StatTile label="Value received" value={money(2230.5)} delta="+8.4%" positive hint="vs last week" icon="payments" tone="success" />
-        <StatTile label="Disputed" value="1" hint="GRN-0116 · short delivery" icon="report" tone="warn" />
-        <StatTile label="Invoice match" value="96%" hint="3-way match accuracy" icon="verified" tone="info" />
+        </View>
+      </View>
+
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">Received this week 5</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Value received {money(2230.5)}
+        </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Disputed 1</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Invoice match 96%</Text>
+      </View>
+
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Status</Text>
+        <View class="w-36">
+          <View
+            ref={(node) => filterAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter status"
+            onPress={() => filterOpen.set(!filterOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{filter()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={filterOpen()}>
+            <Overlay
+              anchor={filterAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => filterOpen.set(false)}
+            >
+              <View class="w-36 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+                <Each of={filters}>
+                  {(name) => (
+                    <View
+                      role="button"
+                      accessibilityLabel={"Filter by " + name()}
+                      onPress={() => {
+                        filter.set(name());
+                        filterOpen.set(false);
+                      }}
+                      class={
+                        "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                        (filter() === name()
+                          ? "bg-surface-variant"
+                          : "hover:bg-surface-container-low")
+                      }
+                    >
+                      <Text class="font-body text-body-sm text-on-surface">{name()}</Text>
+                      <Text class="font-label text-label-sm tabular-nums text-outline">
+                        {name() === "All"
+                          ? rows().length
+                          : rows().filter((grn) => grn.status === name()).length}
+                      </Text>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline">
+          Showing {filtered().length} of {rows().length} receipts
+        </Text>
+        <View class="flex-1" />
       </View>
 
       <TableWrap class="flex-1 min-h-0">
@@ -97,7 +166,7 @@ export function GrnHistoryScreen() {
             <HeadCell label="Total" flex={1} align="right" />
             <HeadCell label="Status" flex={1} />
           </Head>
-          <Each of={rows()}>
+          <Each of={filtered()}>
             {(grn) => (
               <Row
                 onPress={() => navigate("purchases")}
@@ -123,7 +192,7 @@ export function GrnHistoryScreen() {
         </Scroll>
       </TableWrap>
 
-      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-4 py-2.5">
+      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-3 py-1.5">
         <Text class="font-body text-body-sm text-outline">
           Receiving posts inventory, updates moving-average cost and records the supplier bill.
         </Text>
@@ -132,6 +201,6 @@ export function GrnHistoryScreen() {
           <Button label="Suppliers" size="sm" variant="ghost" onPress={() => navigate("suppliers")} />
         </View>
       </View>
-    </Screen>
+    </View>
   );
 }

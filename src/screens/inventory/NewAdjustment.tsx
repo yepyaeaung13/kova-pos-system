@@ -1,7 +1,6 @@
-import { computed, signal, Text, View } from "nsh";
+import { computed, Scroll, signal, Text, View } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
 import { CardHeader, Eyebrow, InfoRow } from "../../ui/Card";
 import { Field, TextBox } from "../../ui/Field";
 import {
@@ -41,6 +40,12 @@ export function NewAdjustmentScreen() {
     const number = nextAdjustmentNo();
     applyStockDelta(row.sku, delta);
     recordAdjustment({
+      adj_no: number,
+      branch_id: "BR-01",
+      item_id: row.sku,
+      delta_qty: delta,
+      notes: note(),
+      created_at: "Today · " + (stamp().split(" · ")[1] ?? ""),
       number,
       items: 1,
       reason: reason(),
@@ -62,56 +67,56 @@ export function NewAdjustmentScreen() {
   };
 
   return (
-    <Screen
-      scroll={false}
-      title="New stock adjustment"
-      subtitle="Write off waste or correct a count — the ledger follows"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">New stock adjustment</Text>
+          <Text class="font-body text-body-sm text-outline">
+            Write off waste or correct a count — the ledger follows
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Cancel" onPress={post} />
           <Button label="Post adjustment" icon="check" variant="primary" onPress={post} />
-        </>
-      }
-    >
-      <View class="flex-1 flex-row gap-4 min-h-0">
-        <View class="flex-1 gap-4">
-          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
+        </View>
+      </View>
+      <View class="flex-1 flex-row gap-3 min-h-0">
+        <View class="flex-1 gap-3 min-w-0">
+          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-3">
             <CardHeader title="What moved" hint="Pick the item and the reason" />
 
             <View class="gap-1.5">
               <Text class="font-label text-label-md text-on-surface-variant">Item</Text>
               <View class="rounded border border-outline-variant bg-surface-container-low p-1">
-                <View style={{ maxHeight: 220 }}>
-                  <View class="gap-0.5">
-                    <Each of={inventory().slice(0, 8)}>
-                      {(row, index) => (
-                        <View
-                          role="button"
-                          onPress={() => selected.set(index())}
-                          class={
-                            "flex-row items-center justify-between rounded px-2.5 py-1.5 " +
-                            (selected() === index() ? "bg-surface-variant" : "hover:bg-surface-container")
-                          }
-                        >
-                          <View class="flex-row items-center gap-2 min-w-0">
-                            <View class="h-6 w-6 items-center justify-center rounded-sm bg-surface-container-lowest">
-                              <Icon name="inventory_2" size={13} />
-                            </View>
-                            <View class="gap-0 min-w-0">
-                              <Text class="font-label text-label-md text-on-surface truncate">{row().name}</Text>
-                              <Text class="font-body text-body-sm text-outline tabular-nums">
-                                {row().sku} · {row().onHand} {row().unit} on hand
-                              </Text>
-                            </View>
+                <Scroll style={{ maxHeight: 110 }} contentClass="gap-0.5">
+                  <Each of={inventory().slice(0, 8)}>
+                    {(row, index) => (
+                      <View
+                        role="button"
+                        onPress={() => selected.set(index())}
+                        class={
+                          "flex-row items-center justify-between rounded px-2.5 py-1 " +
+                          (selected() === index() ? "bg-surface-variant" : "hover:bg-surface-container")
+                        }
+                      >
+                        <View class="flex-row items-center gap-2 min-w-0">
+                          <View class="h-6 w-6 items-center justify-center rounded-sm bg-surface-container-lowest">
+                            <Icon name="inventory_2" size={13} />
                           </View>
-                          <Text class="font-label text-label-sm tabular-nums text-outline">
-                            {money(row().unitCost)}/{row().unit}
-                          </Text>
+                          <View class="gap-0 min-w-0">
+                            <Text class="font-label text-label-md text-on-surface truncate">{row().name}</Text>
+                            <Text class="font-body text-body-sm text-outline tabular-nums">
+                              {row().sku} · {row().onHand} {row().unit} on hand
+                            </Text>
+                          </View>
                         </View>
-                      )}
-                    </Each>
-                  </View>
-                </View>
+                        <Text class="font-label text-label-sm tabular-nums text-outline">
+                          {money(row().unitCost)}/{row().unit}
+                        </Text>
+                      </View>
+                    )}
+                  </Each>
+                </Scroll>
               </View>
             </View>
 
@@ -192,7 +197,7 @@ export function NewAdjustmentScreen() {
         </View>
 
         <View class="gap-3" style={{ width: 330 }}>
-          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-4">
+          <View class="gap-3 rounded-md border border-outline-variant bg-surface-container-lowest p-3">
             <Eyebrow label="Impact" />
             <View class="flex-row items-center gap-2.5">
               <View class="h-10 w-10 items-center justify-center rounded bg-surface-container">
@@ -213,7 +218,7 @@ export function NewAdjustmentScreen() {
             </View>
           </View>
 
-          <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-low p-4">
+          <View class="gap-2 rounded-md border border-outline-variant bg-surface-container-low p-3">
             <CardHeader title="Ledger entry" hint="Created when posted" />
             <View class="flex-row items-center justify-between gap-2 border-t border-outline-variant/60 pt-2">
               <Text class="font-body text-body-sm text-on-surface-variant">Dr</Text>
@@ -234,6 +239,6 @@ export function NewAdjustmentScreen() {
           <Button label="Post adjustment" variant="primary" icon="check" onPress={post} />
         </View>
       </View>
-    </Screen>
+    </View>
   );
 }

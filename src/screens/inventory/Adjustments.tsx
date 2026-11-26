@@ -1,34 +1,127 @@
-import { Scroll, Text, View } from "nsh";
-import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
-import { StatusPill, type Tone } from "../../ui/Badge";
-import { StatTile } from "../../ui/Card";
-import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
+import { Overlay, signal, Scroll, Text, View, type ViewRef } from "nsh";
 import { navigate, recentAdjustments } from "../../store";
-import { adjustments } from "../../data/ops";
+import { Icon } from "../../ui/Icon";
+import { Button } from "../../ui/Button";
+import { StatusPill } from "../../ui/Badge";
+import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
+import { loadAdjustments } from "../../db/repo";
+import { adjustments as adjustmentData, type Adjustment } from "../../data/ops";
 import { money } from "../../format";
 
+const filters = ["All", "Posted", "Draft"] as const;
+
 export function AdjustmentsScreen() {
-  const rows = () => [...recentAdjustments(), ...adjustments];
-  const posted = () => rows().filter((row) => row.status === "Posted").length;
+  const filter = signal<(typeof filters)[number]>("All");
+  const filterOpen = signal(false);
+  const filterAnchor = signal<ViewRef | null>(null);
+  const persisted = signal<Adjustment[]>([]);
+  void loadAdjustments()
+    .then((rows) => {
+      if (rows.length === 0) return;
+      persisted.set(
+        rows.map((row) => ({
+          ...row,
+          reason: row.reason as Adjustment["reason"],
+          status: "Posted" as const,
+          items: row.items ?? 1,
+        })),
+      );
+    })
+    .catch(() => undefined);
+
+  /** Session adjustments first, then sqlite, then the design fixtures. */
+  const rows = () => {
+    const merged: Adjustment[] = [];
+    const seen = new Set<string>();
+    for (const adj of [...recentAdjustments(), ...persisted(), ...adjustmentData]) {
+      if (seen.has(adj.adj_no)) continue;
+      seen.add(adj.adj_no);
+      merged.push(adj);
+    }
+    return merged;
+  };
+
+  const posted = () => rows().filter((a: Adjustment) => a.status === "Posted").length;
+  const filtered = () =>
+    rows().filter((row) => filter() === "All" || row.status === filter());
 
   return (
-    <Screen
-      scroll={false}
-      title="Stock adjustments"
-      subtitle="Waste, expiry and count corrections — every write-off keeps a reason"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">Stock adjustments</Text>
+          <Text class="font-body text-body-sm text-outline">
+            Waste, expiry and count corrections — every write-off keeps a reason
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Export" icon="download" />
           <Button label="New adjustment" icon="add" variant="primary" onPress={() => navigate("new-adjustment")} />
-        </>
-      }
-    >
-      <View class="flex-row gap-3">
-        <StatTile label="Posted today" value={String(posted())} hint="waste + count" icon="tune" />
-        <StatTile label="Waste value" value={money(51.2)} hint="this week" icon="delete_sweep" tone="warn" />
-        <StatTile label="Count gains" value={money(26.1)} hint="found stock" icon="add_circle" tone="success" />
-        <StatTile label="Approval needed" value="1" hint="ADJ-0058 · draft" icon="pending_actions" tone="info" />
+        </View>
+      </View>
+
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">Posted today {posted()}</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Waste value {money(51.2)}</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Count gains {money(26.1)}</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Approval needed 1</Text>
+      </View>
+
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Status</Text>
+        <View class="w-36">
+          <View
+            ref={(node) => filterAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter status"
+            onPress={() => filterOpen.set(!filterOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{filter()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={filterOpen()}>
+            <Overlay
+              anchor={filterAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => filterOpen.set(false)}
+            >
+              <View class="w-36 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+                <Each of={filters}>
+                  {(name) => (
+                    <View
+                      role="button"
+                      accessibilityLabel={"Filter by " + name()}
+                      onPress={() => {
+                        filter.set(name());
+                        filterOpen.set(false);
+                      }}
+                      class={
+                        "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                        (filter() === name()
+                          ? "bg-surface-variant"
+                          : "hover:bg-surface-container-low")
+                      }
+                    >
+                      <Text class="font-body text-body-sm text-on-surface">{name()}</Text>
+                      <Text class="font-label text-label-sm tabular-nums text-outline">
+                        {name() === "All"
+                          ? rows().length
+                          : rows().filter((row) => row.status === name()).length}
+                      </Text>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline">
+          Showing {filtered().length} of {rows().length} adjustments
+        </Text>
+        <View class="flex-1" />
       </View>
 
       <TableWrap class="flex-1 min-h-0">
@@ -42,10 +135,10 @@ export function AdjustmentsScreen() {
             <HeadCell label="When" flex={1.8} />
             <HeadCell label="Status" flex={1} />
           </Head>
-          <Each of={rows()}>
+          <Each of={filtered()}>
             {(row) => (
               <Row onPress={() => navigate("new-adjustment")}>
-                <TextCell text={row().number} flex={1.6} mono strong />
+                <TextCell text={row().adj_no} flex={1.6} mono strong />
                 <Cell flex={1.3}>
                   <Text class="font-body text-body-md text-on-surface">{row().reason}</Text>
                 </Cell>
@@ -54,36 +147,26 @@ export function AdjustmentsScreen() {
                   <Text
                     class={
                       "font-label text-label-md tabular-nums " +
-                      (row().value < 0 ? "text-error" : "text-secondary")
+                      (row().delta_qty < 0 ? "text-error" : "text-secondary")
                     }
                   >
-                    {row().value < 0 ? "−" : "+"}{money(Math.abs(row().value))}
+                    {row().delta_qty < 0 ? "−" : "+"}{money(Math.abs(row().delta_qty))}
                   </Text>
                 </Cell>
                 <Cell flex={1.4}>
-                  <Text class="font-body text-body-md text-on-surface-variant">{row().by}</Text>
+                  <Text class="font-body text-body-md text-on-surface">{row().branch_id}</Text>
                 </Cell>
                 <Cell flex={1.8}>
-                  <Text class="font-body text-body-md text-on-surface-variant">{row().date}</Text>
+                  <Text class="font-body text-body-md text-on-surface-variant">{row().created_at}</Text>
                 </Cell>
                 <Cell flex={1}>
-                  <StatusPill
-                    label={row().status}
-                    tone={(row().status === "Posted" ? "success" : "warn") as Tone}
-                  />
+                  <StatusPill label={row().status} tone={row().status === "Posted" ? "success" : "warn"} />
                 </Cell>
               </Row>
             )}
           </Each>
         </Scroll>
       </TableWrap>
-
-      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-4 py-2.5">
-        <Text class="font-body text-body-sm text-outline">
-          Adjustments post to waste & spoilage in the ledger; gains post against inventory.
-        </Text>
-        <Button label="Waste report" size="sm" variant="ghost" onPress={() => navigate("overview")} />
-      </View>
-    </Screen>
+    </View>
   );
 }

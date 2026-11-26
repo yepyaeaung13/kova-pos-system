@@ -1,9 +1,7 @@
-import { Scroll, signal, Text, View } from "nsh";
+import { Overlay, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
-import { Screen } from "../../ui/Screen";
-import { Chip, StatusPill, type Tone } from "../../ui/Badge";
-import { StatTile } from "../../ui/Card";
+import { StatusPill, type Tone } from "../../ui/Badge";
 import { TableWrap, Head, HeadCell, Row, Cell, TextCell } from "../../ui/Table";
 import {
   applyStockDelta,
@@ -81,6 +79,8 @@ function linesFromStock(supplier: string): PoLine[] {
 
 export function PurchaseOrdersScreen() {
   const tab = signal<(typeof tabs)[number]>("All");
+  const tabOpen = signal(false);
+  const tabAnchor = signal<ViewRef | null>(null);
   const persisted = signal<PoView[]>([]);
   const notice = signal("");
   void loadPurchaseOrders()
@@ -112,16 +112,17 @@ export function PurchaseOrdersScreen() {
     return { ...po, status: "Received", grnNo };
   };
 
-  const rows = () => {
+  const allRows = () => {
     const saved = persisted();
     const numbers = new Set(saved.map((po) => po.number));
     const fallback = purchaseOrders
       .filter((po) => !numbers.has(po.number))
       .map((po) => withReceipt({ ...po, grnNo: null }));
-    return [...saved.map(withReceipt), ...fallback].filter(
-      (po) => tab() === "All" || po.status === tab(),
-    );
+    return [...saved.map(withReceipt), ...fallback];
   };
+
+  const rows = () =>
+    allRows().filter((po) => tab() === "All" || po.status === tab());
 
   const receive = (po: PoView) => {
     if (po.status === "Received") return;
@@ -257,39 +258,84 @@ export function PurchaseOrdersScreen() {
   };
 
   return (
-    <Screen
-      scroll={false}
-      title="Purchase orders"
-      subtitle="What is on its way, and what still needs a supplier"
-      actions={
-        <>
+    <View class="flex-1 flex-col gap-3 p-4 min-h-0">
+      <View class="flex-row items-center justify-between gap-3">
+        <View class="gap-0.5">
+          <Text class="font-headline text-headline-lg text-on-surface">Purchase orders</Text>
+          <Text class="font-body text-body-sm text-outline">
+            What is on its way, and what still needs a supplier
+          </Text>
+        </View>
+        <View class="flex-row items-center gap-2">
           <Button label="Suggested orders" icon="auto_awesome" onPress={suggest} />
           <Button label="New purchase order" icon="add" variant="primary" />
-        </>
-      }
-    >
-      <View class="flex-row gap-3">
-        <StatTile label="Open orders" value="3" hint="2 sent · 1 partial" icon="request_quote" />
-        <StatTile label="Committed spend" value={money(896.6)} hint="this week" icon="payments" tone="info" />
-        <StatTile label="Arriving today" value="1" hint="Nestlé Dairy · 3 lines" icon="local_shipping" tone="warn" />
-        <StatTile label="On-time rate" value="94%" delta="+2.1%" positive hint="last 30 days" icon="verified" tone="success" />
+        </View>
       </View>
 
-      <View class="flex-row items-center gap-2">
-        <Each of={tabs}>
-          {(name) => (
-            <Chip
-              label={name()}
-              selected={tab() === name()}
-              count={name() === "All" ? rows().length : rows().filter((po) => po.status === name()).length}
-              onPress={() => tab.set(name())}
-            />
-          )}
-        </Each>
-        <View class="flex-1" />
-        <Text class="font-body text-body-sm text-outline">
-          Drafts are not sent to suppliers until you approve them.
+      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+        <Text class="font-body text-body-sm text-on-surface-variant">Open orders 3</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">
+          Committed spend {money(896.6)}
         </Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">Arriving today 1</Text>
+        <Text class="font-body text-body-sm text-on-surface-variant">On-time rate 94%</Text>
+      </View>
+
+      <View class="flex-row items-center gap-3">
+        <Text class="font-label text-label-sm uppercase tracking-label text-outline">Status</Text>
+        <View class="w-36">
+          <View
+            ref={(node) => tabAnchor.set(node)}
+            role="button"
+            accessibilityLabel="Filter status"
+            onPress={() => tabOpen.set(!tabOpen())}
+            class="h-8 flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-lowest px-3"
+          >
+            <Text class="font-body text-body-sm text-on-surface">{tab()}</Text>
+            <Icon name="expand_more" size={16} color="#6B5752" />
+          </View>
+          <If when={tabOpen()}>
+            <Overlay
+              anchor={tabAnchor()}
+              placement="bottom"
+              align="start"
+              offset={4}
+              onPressOutside={() => tabOpen.set(false)}
+            >
+              <View class="w-36 rounded-md border border-outline-variant bg-surface-container-lowest p-1">
+                <Each of={tabs}>
+                  {(name) => (
+                    <View
+                      role="button"
+                      accessibilityLabel={"Filter by " + name()}
+                      onPress={() => {
+                        tab.set(name());
+                        tabOpen.set(false);
+                      }}
+                      class={
+                        "flex-row items-center justify-between gap-2 rounded-sm px-2 py-1.5 " +
+                        (tab() === name()
+                          ? "bg-surface-variant"
+                          : "hover:bg-surface-container-low")
+                      }
+                    >
+                      <Text class="font-body text-body-sm text-on-surface">{name()}</Text>
+                      <Text class="font-label text-label-sm tabular-nums text-outline">
+                        {name() === "All"
+                          ? allRows().length
+                          : allRows().filter((po) => po.status === name()).length}
+                      </Text>
+                    </View>
+                  )}
+                </Each>
+              </View>
+            </Overlay>
+          </If>
+        </View>
+        <Text class="font-body text-body-sm text-outline">
+          Showing {rows().length} of {allRows().length} orders · drafts stay unsent
+        </Text>
+        <View class="flex-1" />
       </View>
 
       <If when={notice() !== ""}>
@@ -344,12 +390,12 @@ export function PurchaseOrdersScreen() {
         </Scroll>
       </TableWrap>
 
-      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-4 py-2.5">
+      <View class="flex-row items-center justify-between rounded-md border border-outline-variant bg-surface-container-low px-3 py-1.5">
         <Text class="font-body text-body-sm text-outline">
           Suggested orders are built from par levels and the last 14 days of usage.
         </Text>
         <Button label="Review suggestions" size="sm" variant="ghost" iconRight="arrow_forward" />
       </View>
-    </Screen>
+    </View>
   );
 }

@@ -3,7 +3,7 @@ import { migrations } from "./schema";
 import { isoNow, rowId, ulid } from "./ulid";
 import { patchSync, syncState } from "../sync/state";
 import { customers, products } from "../data/mock";
-import { accounts, bankLines, expenses, payables, stockItems, suppliers } from "../data/ops";
+import { accounts, bankLines, expenses, payables, recipes, stockItems, suppliers, type Adjustment, type Supplier } from "../data/ops";
 
 /** Branch/terminal identity the outbox stamps on every mutation. */
 const BRANCH_ID = "branch_gulberg";
@@ -234,7 +234,7 @@ function seedSale(): string {
         [
           supplier.id,
           supplier.name,
-          supplier.contact,
+          supplier.contact_name,
           supplier.phone,
           "Net 7",
           now,
@@ -246,8 +246,10 @@ function seedSale(): string {
   }
 
   for (const item of stockItems) {
+    const supplierId =
+      suppliers.find((supplier) => supplier.name === item.supplier)?.id ?? null;
     lines.push(
-      "INSERT OR IGNORE INTO inv_items (id, sku, name, category, unit, reorder_level, cost_cents, updated_at) VALUES (" +
+      "INSERT OR IGNORE INTO inv_items (id, sku, name, category, unit, reorder_level, cost_cents, supplier_id, updated_at) VALUES (" +
         [
           "item_" + item.sku.toLowerCase(),
           item.sku,
@@ -256,9 +258,10 @@ function seedSale(): string {
           item.unit,
           String(item.par),
           String(Math.round(item.unitCost * 100)),
+          supplierId ?? "NULL",
           now,
         ]
-          .map(sqlText)
+          .map((value) => (value === "NULL" ? "NULL" : sqlText(value)))
           .join(", ") +
         ");",
     );
@@ -461,6 +464,26 @@ async function runInit(): Promise<boolean> {
     );
     if ((expenseRows[0]?.n ?? 0) === 0) {
       await exec("BEGIN IMMEDIATE;\n" + seedExpenses() + "\nCOMMIT;");
+    }
+
+    await seedTransfers();
+
+    await seedRecipes();
+
+    await seedSuppliers();
+
+    // Backfill supplier links on databases created before the item_supplier migration.
+    for (const item of stockItems) {
+      const supplierId =
+        suppliers.find((supplier) => supplier.name === item.supplier)?.id ?? null;
+      if (!supplierId) continue;
+      await exec(
+        "UPDATE inv_items SET supplier_id = " +
+          sqlText(supplierId) +
+          " WHERE sku = " +
+          sqlText(item.sku) +
+          " AND (supplier_id IS NULL OR supplier_id = '');",
+      );
     }
 
     const accRows = await query<{ id: string; code: string }>(
@@ -1667,33 +1690,108 @@ export async function payVendorBill(input: {
   return result.count > 0;
 }
 
+/** One side of a manual journal entry: an account with a debit or a credit. */
+export interface JournalLineInput {
+  accountCode: string;
+  debitCents: number;
+  creditCents: number;
+}
+
+/** Clamps the cents on a line and drops entries with no value. */
+function cleanJournalLines(lines: JournalLineInput[]): JournalLineInput[] {
+  return lines
+    .map((line) => ({
+      accountCode: line.accountCode,
+      debitCents: Math.max(0, Math.round(line.debitCents)),
+      creditCents: Math.max(0, Math.round(line.creditCents)),
+    }))
+    .filter((line) => line.debitCents > 0 || line.creditCents > 0);
+}
+
+/** The `(id, …)` tuples that store each line. */
+function journalLineValues(entryId: string, lines: JournalLineInput[]): string {
+  return lines
+    .map((line) =>
+      [
+        rowId("jl"),
+        entryId,
+        "acct_" + line.accountCode,
+        String(line.debitCents),
+        String(line.creditCents),
+      ]
+        .map(sqlText)
+        .join(", "),
+    )
+    .map((values) => "(" + values + ")")
+    .join(",\n  ");
+}
+
 /**
- * Posts a manual two-line journal entry. Balances move by account type: a debit
- * grows assets and expenses, a credit grows liabilities, equity and revenue.
+ * SQL that moves one line through the balances. A debit grows assets and
+ * expenses and shrinks liabilities, equity and revenue; a credit does the
+ * reverse. Two statements per side keep the account-type guard in SQL.
+ */
+function journalBalanceSql(line: JournalLineInput): string {
+  const id = sqlText("acct_" + line.accountCode);
+  const statements: string[] = [];
+  if (line.debitCents > 0) {
+    statements.push(
+      `UPDATE acc_accounts SET balance_cents = balance_cents + ${line.debitCents} WHERE id = ${id} AND type IN ('Asset','Expense');`,
+      `UPDATE acc_accounts SET balance_cents = balance_cents - ${line.debitCents} WHERE id = ${id} AND type IN ('Liability','Equity','Revenue');`,
+    );
+  }
+  if (line.creditCents > 0) {
+    statements.push(
+      `UPDATE acc_accounts SET balance_cents = balance_cents + ${line.creditCents} WHERE id = ${id} AND type IN ('Liability','Equity','Revenue');`,
+      `UPDATE acc_accounts SET balance_cents = balance_cents - ${line.creditCents} WHERE id = ${id} AND type IN ('Asset','Expense');`,
+    );
+  }
+  return statements.join("\n");
+}
+
+/** The outbox payload shared by posted and draft manual entries. */
+function journalPayload(input: {
+  entryNo: string;
+  memo: string;
+  postedAt: string;
+  lines: JournalLineInput[];
+  status?: string;
+}): Record<string, unknown> {
+  return {
+    entry_no: input.entryNo,
+    source_type: "manual",
+    ...(input.status ? { status: input.status } : {}),
+    memo: input.memo,
+    posted_at: input.postedAt,
+    lines: input.lines.map((line) => ({
+      account_code: line.accountCode,
+      debit_cents: line.debitCents,
+      credit_cents: line.creditCents,
+    })),
+  };
+}
+
+/**
+ * Posts a manual journal entry with any number of lines. Balances move by
+ * account type, so a debit grows assets and expenses while a credit grows
+ * liabilities, equity and revenue.
  */
 export async function postJournalEntry(input: {
   entryNo: string;
   memo: string;
-  debitCode: string;
-  creditCode: string;
-  amountCents: number;
+  lines: JournalLineInput[];
   postedAt?: string;
 }): Promise<void> {
-  const amount = Math.max(1, Math.round(input.amountCents));
+  const lines = cleanJournalLines(input.lines);
   const postedAt = input.postedAt ?? isoNow();
   const entryId = "JE_" + input.entryNo.slice(3);
-  const debitId = "acct_" + input.debitCode;
-  const creditId = "acct_" + input.creditCode;
-  const payload = {
-    entry_no: input.entryNo,
-    source_type: "manual",
+  const payload = journalPayload({
+    entryNo: input.entryNo,
     memo: input.memo,
-    posted_at: postedAt,
-    lines: [
-      { account_code: input.debitCode, debit_cents: amount, credit_cents: 0 },
-      { account_code: input.creditCode, debit_cents: 0, credit_cents: amount },
-    ],
-  };
+    postedAt,
+    lines,
+  });
+  const balanceStatements = lines.map(journalBalanceSql).filter((sql) => sql !== "").join("\n");
 
   await withWrite(async () => {
     await exec(`
@@ -1708,12 +1806,8 @@ INSERT INTO acc_journal_entries (id, entry_no, branch_id, source_type, source_id
       sqlText(postedAt),
     ].join(", ")});
 INSERT INTO acc_journal_lines (id, entry_id, account_id, debit_cents, credit_cents) VALUES
-  (${[rowId("jl"), entryId, debitId, String(amount), "0"].map(sqlText).join(", ")}),
-  (${[rowId("jl"), entryId, creditId, "0", String(amount)].map(sqlText).join(", ")});
-UPDATE acc_accounts SET balance_cents = balance_cents + ${amount} WHERE id = ${sqlText(debitId)} AND type IN ('Asset','Expense');
-UPDATE acc_accounts SET balance_cents = balance_cents - ${amount} WHERE id = ${sqlText(debitId)} AND type IN ('Liability','Equity','Revenue');
-UPDATE acc_accounts SET balance_cents = balance_cents + ${amount} WHERE id = ${sqlText(creditId)} AND type IN ('Liability','Equity','Revenue');
-UPDATE acc_accounts SET balance_cents = balance_cents - ${amount} WHERE id = ${sqlText(creditId)} AND type IN ('Asset','Expense');
+  ${journalLineValues(entryId, lines)};
+${balanceStatements}
 UPDATE sync_terminal_config SET value = ${sqlText(String(counters.je))} WHERE key = 'next_je_seq';
 INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
 VALUES (${[
@@ -1742,27 +1836,19 @@ COMMIT;
 export async function saveJournalDraft(input: {
   entryNo: string;
   memo: string;
-  debitCode: string;
-  creditCode: string;
-  amountCents: number;
+  lines: JournalLineInput[];
   postedAt?: string;
 }): Promise<void> {
-  const amount = Math.max(1, Math.round(input.amountCents));
+  const lines = cleanJournalLines(input.lines);
   const postedAt = input.postedAt ?? isoNow();
   const entryId = "JE_" + input.entryNo.slice(3);
-  const debitId = "acct_" + input.debitCode;
-  const creditId = "acct_" + input.creditCode;
-  const payload = {
-    entry_no: input.entryNo,
-    source_type: "manual",
-    status: "Draft",
+  const payload = journalPayload({
+    entryNo: input.entryNo,
     memo: input.memo,
-    posted_at: postedAt,
-    lines: [
-      { account_code: input.debitCode, debit_cents: amount, credit_cents: 0 },
-      { account_code: input.creditCode, debit_cents: 0, credit_cents: amount },
-    ],
-  };
+    postedAt,
+    lines,
+    status: "Draft",
+  });
 
   await withWrite(async () => {
     await exec(`
@@ -1778,8 +1864,7 @@ INSERT INTO acc_journal_entries (id, entry_no, branch_id, source_type, source_id
       sqlText("Draft"),
     ].join(", ")});
 INSERT INTO acc_journal_lines (id, entry_id, account_id, debit_cents, credit_cents) VALUES
-  (${[rowId("jl"), entryId, debitId, String(amount), "0"].map(sqlText).join(", ")}),
-  (${[rowId("jl"), entryId, creditId, "0", String(amount)].map(sqlText).join(", ")});
+  ${journalLineValues(entryId, lines)};
 UPDATE sync_terminal_config SET value = ${sqlText(String(counters.je))} WHERE key = 'next_je_seq';
 INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
 VALUES (${[
@@ -1828,28 +1913,13 @@ WHERE l.entry_id = ${sqlText(entry.id)};
 `);
 
   const balanceStatements = lines
-    .map((line) => {
-      const id = sqlText(line.account_id);
-      const debit = Number(line.debit_cents);
-      const credit = Number(line.credit_cents);
-      if (debit > 0) {
-        return (
-          "UPDATE acc_accounts SET balance_cents = balance_cents + " + debit +
-          " WHERE id = " + id + " AND type IN ('Asset','Expense');\n" +
-          "UPDATE acc_accounts SET balance_cents = balance_cents - " + debit +
-          " WHERE id = " + id + " AND type IN ('Liability','Equity','Revenue');"
-        );
-      }
-      if (credit > 0) {
-        return (
-          "UPDATE acc_accounts SET balance_cents = balance_cents + " + credit +
-          " WHERE id = " + id + " AND type IN ('Liability','Equity','Revenue');\n" +
-          "UPDATE acc_accounts SET balance_cents = balance_cents - " + credit +
-          " WHERE id = " + id + " AND type IN ('Asset','Expense');"
-        );
-      }
-      return "";
-    })
+    .map((line) =>
+      journalBalanceSql({
+        accountCode: line.code,
+        debitCents: Number(line.debit_cents),
+        creditCents: Number(line.credit_cents),
+      }),
+    )
     .filter((sql) => sql !== "")
     .join("\n");
 
@@ -1890,6 +1960,182 @@ COMMIT;
   return true;
 }
 
+/**
+ * Deletes a saved draft and its lines. Posted entries are never removed, so
+ * this returns false for anything that is not a draft.
+ */
+export async function discardJournalDraft(entryNo: string): Promise<boolean> {
+  const rows = await query<{ id: string; status: string }>(
+    "SELECT id, status FROM acc_journal_entries WHERE entry_no = " +
+      sqlText(entryNo) +
+      ";",
+  );
+  const entry = rows[0];
+  if (!entry || entry.status !== "Draft") return false;
+
+  await withWrite(async () => {
+    await exec(`
+BEGIN IMMEDIATE;
+DELETE FROM acc_journal_lines WHERE entry_id = ${sqlText(entry.id)};
+DELETE FROM acc_journal_entries WHERE id = ${sqlText(entry.id)};
+INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
+VALUES (${[
+      ulid(),
+      "accounting",
+      "journal_entry",
+      entry.id,
+      "DELETE",
+      JSON.stringify({ entry_no: entryNo, deleted: true }),
+      TERMINAL_ID + ":journal_entry:" + entryNo + ":discard",
+      BRANCH_ID,
+      TERMINAL_ID,
+      isoNow(),
+    ].map(sqlText).join(", ")});
+COMMIT;
+`);
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+  return true;
+}
+
+/**
+ * Replaces a draft's memo and lines without posting it. Balances stay put, so
+ * only the header and its line rows change; the outbox gets an UPDATE.
+ */
+export async function updateJournalDraft(input: {
+  entryNo: string;
+  memo: string;
+  lines: JournalLineInput[];
+}): Promise<boolean> {
+  const rows = await query<{ id: string; status: string; posted_at: string }>(
+    "SELECT id, status, posted_at FROM acc_journal_entries WHERE entry_no = " +
+      sqlText(input.entryNo) +
+      ";",
+  );
+  const entry = rows[0];
+  if (!entry || entry.status !== "Draft") return false;
+
+  const lines = cleanJournalLines(input.lines);
+  const payload = journalPayload({
+    entryNo: input.entryNo,
+    memo: input.memo,
+    postedAt: entry.posted_at,
+    lines,
+    status: "Draft",
+  });
+
+  await withWrite(async () => {
+    await exec(`
+BEGIN IMMEDIATE;
+DELETE FROM acc_journal_lines WHERE entry_id = ${sqlText(entry.id)};
+INSERT INTO acc_journal_lines (id, entry_id, account_id, debit_cents, credit_cents) VALUES
+  ${journalLineValues(entry.id, lines)};
+UPDATE acc_journal_entries SET memo = ${sqlText(input.memo)} WHERE id = ${sqlText(entry.id)};
+INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
+VALUES (${[
+      ulid(),
+      "accounting",
+      "journal_entry",
+      entry.id,
+      "UPDATE",
+      JSON.stringify(payload),
+      TERMINAL_ID + ":journal_entry:" + input.entryNo + ":edited",
+      BRANCH_ID,
+      TERMINAL_ID,
+      isoNow(),
+    ].map(sqlText).join(", ")});
+COMMIT;
+`);
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+  return true;
+}
+
+/**
+ * Posts a mirror entry that swaps every debit for a credit. The original stays
+ * in the ledger, so the pair nets to zero and the audit trail is intact.
+ */
+export async function reverseJournalEntry(input: {
+  entryNo: string;
+  reversalNo: string;
+  postedAt?: string;
+}): Promise<boolean> {
+  const rows = await query<{ id: string; status: string; memo: string }>(
+    "SELECT id, status, memo FROM acc_journal_entries WHERE entry_no = " +
+      sqlText(input.entryNo) +
+      ";",
+  );
+  const original = rows[0];
+  if (!original || original.status === "Draft") return false;
+
+  const stored = await query<{
+    debit_cents: number;
+    credit_cents: number;
+    code: string;
+  }>(`
+SELECT l.debit_cents, l.credit_cents, a.code
+FROM acc_journal_lines l
+JOIN acc_accounts a ON a.id = l.account_id
+WHERE l.entry_id = ${sqlText(original.id)};
+`);
+  if (stored.length === 0) return false;
+
+  const lines = cleanJournalLines(
+    stored.map((line) => ({
+      accountCode: line.code,
+      debitCents: Number(line.credit_cents),
+      creditCents: Number(line.debit_cents),
+    })),
+  );
+  const postedAt = input.postedAt ?? isoNow();
+  const entryId = "JE_" + input.reversalNo.slice(3);
+  const memo = "Reversal of " + input.entryNo;
+  const payload = {
+    ...journalPayload({ entryNo: input.reversalNo, memo, postedAt, lines }),
+    source_type: "reversal",
+    reverses: input.entryNo,
+  };
+  const balanceStatements = lines.map(journalBalanceSql).filter((sql) => sql !== "").join("\n");
+
+  await withWrite(async () => {
+    await exec(`
+BEGIN IMMEDIATE;
+INSERT INTO acc_journal_entries (id, entry_no, branch_id, source_type, source_id, memo, posted_at) VALUES (${[
+      sqlText(entryId),
+      sqlText(input.reversalNo),
+      sqlText(BRANCH_ID),
+      sqlText("reversal"),
+      sqlText(original.id),
+      sqlText(memo),
+      sqlText(postedAt),
+    ].join(", ")});
+INSERT INTO acc_journal_lines (id, entry_id, account_id, debit_cents, credit_cents) VALUES
+  ${journalLineValues(entryId, lines)};
+${balanceStatements}
+UPDATE sync_terminal_config SET value = ${sqlText(String(counters.je))} WHERE key = 'next_je_seq';
+INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
+VALUES (${[
+      ulid(),
+      "accounting",
+      "journal_entry",
+      entryId,
+      "INSERT",
+      JSON.stringify(payload),
+      TERMINAL_ID + ":journal_entry:" + input.reversalNo,
+      BRANCH_ID,
+      TERMINAL_ID,
+      postedAt,
+    ].map(sqlText).join(", ")});
+COMMIT;
+`);
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+  return true;
+}
+
 export interface JournalRow {
   ref: string;
   description: string;
@@ -1898,6 +2144,39 @@ export interface JournalRow {
   credit: string;
   amount_cents: number;
   status: string;
+}
+
+/** A branch transfer with its status and metadata. */
+export interface Transfer {
+  id: string;
+  transfer_no: string;
+  from_branch: string;
+  to_branch: string;
+  items_qty: number;
+  value_cents: number;
+  sent_at: string;
+  status: string;
+}
+
+/** The structured debit/credit lines of one entry, for the editor. */
+export async function loadJournalLines(entryNo: string): Promise<JournalLineInput[]> {
+  const rows = await query<{
+    account_code: string;
+    debit_cents: number;
+    credit_cents: number;
+  }>(`
+SELECT a.code AS account_code, l.debit_cents, l.credit_cents
+FROM acc_journal_lines l
+JOIN acc_journal_entries e ON e.id = l.entry_id
+JOIN acc_accounts a ON a.id = l.account_id
+WHERE e.entry_no = ${sqlText(entryNo)}
+ORDER BY l.rowid;
+`);
+  return rows.map((row) => ({
+    accountCode: row.account_code,
+    debitCents: Number(row.debit_cents),
+    creditCents: Number(row.credit_cents),
+  }));
 }
 
 /** Posted journal entries with their account names, newest first. */
@@ -2147,13 +2426,18 @@ export interface InventoryRow {
   reorder_level: number;
   cost_cents: number;
   qty_on_hand: number;
+  supplier_id: string | null;
+  supplier_name: string | null;
 }
 
 export async function loadInventory(): Promise<InventoryRow[]> {
   return query<InventoryRow>(`
 SELECT i.sku, i.name, i.category, i.unit, i.reorder_level, i.cost_cents,
+       i.supplier_id,
+       s.name AS supplier_name,
        COALESCE(b.qty_on_hand, 0) AS qty_on_hand
 FROM inv_items i
+LEFT JOIN inv_suppliers s ON s.id = i.supplier_id
 LEFT JOIN inv_stock_balances b ON b.item_id = i.id AND b.branch_id = ${sqlText(BRANCH_ID)}
 ORDER BY i.sku;
 `);
@@ -2695,9 +2979,171 @@ export async function discardOutbox(id: string): Promise<void> {
   await withWrite(() => exec("DELETE FROM sync_outbox WHERE id = " + sqlText(id) + ";"));
 }
 
+export async function seedTransfers(): Promise<void> {
+  const now = isoNow();
+  const lines: string[] = [];
+  lines.push(
+    "INSERT OR IGNORE INTO inv_transfers (id, transfer_no, from_branch, to_branch, items_qty, value_cents, sent_at, status) VALUES " +
+      [
+        "(lower('trf-2026-0032'), 'TRF-2026-0032', 'Gulberg Café', 'DHA Phase 5', 3, 18420, '2026-11-26T07:00:00Z', 'In transit')",
+        "(lower('trf-2026-0031'), 'TRF-2026-0031', 'Gulberg Café', 'Johar Town', 5, 31280, '2026-11-25T18:30:00Z', 'Received')",
+        "(lower('trf-2026-0030'), 'TRF-2026-0030', 'DHA Phase 5', 'Gulberg Café', 2, 9600, '2026-11-22T10:15:00Z', 'Received')",
+      ].join(",\n  ") +
+    ";",
+  );
+  await withWrite(async () => {
+    await exec("BEGIN IMMEDIATE;\n" + lines.join("\n") + "\nCOMMIT;");
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+}
+
+export async function loadTransfers(): Promise<Transfer[]> {
+  return query<Transfer>(`
+SELECT id, transfer_no, from_branch, to_branch, items_qty, value_cents, sent_at, status
+FROM inv_transfers
+ORDER BY sent_at DESC
+`);
+}
+
+export interface SupplierRow {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  phone: string | null;
+  ntn_tax_id: string | null;
+  payment_terms: string | null;
+  updated_at: string;
+  lead_days: number;
+  rating: number;
+  last_delivery: string;
+  payable: number;
+  audit: string;
+  items: number;
+}
+
+export type { Supplier } from "../data/ops";
+
+export async function loadSuppliers(): Promise<Supplier[]> {
+  return query<Supplier>(`
+SELECT id, name, contact_name, phone, lead_days, rating, last_delivery, payable, audit, items
+FROM inv_suppliers
+ORDER BY name ASC
+`);
+}
+
+export async function seedSuppliers(): Promise<void> {
+  const now = isoNow();
+  const lines: string[] = [];
+  const supplierData = [
+    { id: "sup-1", name: "Café Imports", contact_name: "Imran Sheikh", phone: "+92 300 2211334", lead_days: 3, rating: 4.8, last_delivery: "Nov 22", payable: 1840.0, audit: "Verified", items: 8 },
+    { id: "sup-2", name: "Nestlé Dairy", contact_name: "Adeel Raza", phone: "+92 321 7788990", lead_days: 1, rating: 4.6, last_delivery: "Today", payable: 620.5, audit: "Due", items: 6 },
+    { id: "sup-3", name: "Golden Crumb", contact_name: "Nida Aslam", phone: "+92 333 4455661", lead_days: 2, rating: 4.9, last_delivery: "Nov 23", payable: 0, audit: "Verified", items: 12 },
+    { id: "sup-4", name: "Bar Essentials", contact_name: "Kamran Ali", phone: "+92 345 1122345", lead_days: 5, rating: 4.1, last_delivery: "Nov 15", payable: 2140.0, audit: "Overdue", items: 9 },
+    { id: "sup-5", name: "EcoPack", contact_name: "Sadaf Iqbal", phone: "+92 302 6677889", lead_days: 4, rating: 4.4, last_delivery: "Nov 18", payable: 980.0, audit: "Verified", items: 5 },
+  ];
+  for (const s of supplierData) {
+    lines.push(
+      "INSERT OR IGNORE INTO inv_suppliers (id, name, contact_name, phone, lead_days, rating, last_delivery, payable, audit, items, updated_at) VALUES (" +
+        [
+          sqlText(s.id),
+          sqlText(s.name),
+          sqlText(s.contact_name),
+          sqlText(s.phone),
+          String(s.lead_days),
+          String(s.rating),
+          sqlText(s.last_delivery),
+          String(s.payable),
+          sqlText(s.audit),
+          String(s.items),
+          sqlText(now),
+        ].join(", ") + ");",
+    );
+  }
+  await withWrite(async () => {
+    await exec("BEGIN IMMEDIATE;\n" + lines.join("\n") + "\nCOMMIT;");
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+}
+
+/** A menu recipe / BOM, with costed components. */
+export interface Recipe {
+  product: string;
+  product_name?: string;
+  category: string;
+  components?: { name: string; qty: string; cost: number }[];
+  price: number;
+  cost: number;
+  margin: number;
+}
+
+/** Recipes read from the SQLite inventory catalog. */
+export async function loadRecipes(): Promise<Recipe[]> {
+  return query<Recipe>(`
+SELECT product_id AS product, product_name, category, price_cents / 100 AS price, cost_cents / 100 AS cost, margin
+FROM inv_recipes
+`);
+}
+
+export async function seedRecipes(): Promise<void> {
+  const now = isoNow();
+  const lines: string[] = [];
+  for (const recipe of recipes) {
+    const slug = recipe.product.toLowerCase().replace(/\\s+/g, "-");
+    lines.push(
+      "INSERT OR IGNORE INTO inv_recipes (product_id, product_name, updated_at, category, price_cents, cost_cents, margin) VALUES (" +
+        [
+          sqlText(slug),
+          sqlText(recipe.product),
+          sqlText(now),
+          sqlText(recipe.category),
+          String(Math.round(recipe.price * 100)),
+          String(Math.round(recipe.cost * 100)),
+          String(Math.round(recipe.margin * 100)),
+        ].join(", ") + ");",
+    );
+  }
+  await withWrite(async () => {
+    await exec("BEGIN IMMEDIATE;\n" + lines.join("\n") + "\nCOMMIT;");
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
+}
+
 export async function seedCounts(): Promise<{ products: number; accounts: number; stock: number }> {
   const rows = await query<{ products: number; accounts: number; stock: number }>(
     "SELECT (SELECT COUNT(*) FROM pos_products) AS products, (SELECT COUNT(*) FROM acc_accounts) AS accounts, (SELECT COUNT(*) FROM inv_items) AS stock;",
   );
   return rows[0] ?? { products: 0, accounts: 0, stock: 0 };
+}
+
+export async function loadAdjustments(): Promise<Adjustment[]> {
+  return query<Adjustment>(`
+SELECT adj_no, branch_id, item_id, reason, delta_qty, notes, created_at
+FROM inv_adjustments
+ORDER BY created_at DESC
+`);
+}
+
+export async function saveAdjustment(input: {
+  adjNo: string;
+  branchId: string;
+  itemId: string;
+  reason: string;
+  deltaQty: number;
+  notes?: string;
+}): Promise<void> {
+  await withWrite(async () => {
+    await exec(`
+BEGIN IMMEDIATE;
+INSERT INTO inv_adjustments (id, adj_no, branch_id, item_id, reason, delta_qty, notes, created_at)
+VALUES (lower('adj-${input.adjNo}'), ${sqlText(input.adjNo)}, ${sqlText(input.branchId)}, ${sqlText(input.itemId)}, ${sqlText(input.reason)}, ${String(input.deltaQty)}, ${input.notes ? sqlText(input.notes) : "NULL"}, ${sqlText(isoNow())});
+INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
+VALUES (${[ulid(), "accounting", "adjustment", input.adjNo, "INSERT", JSON.stringify({ adjNo: input.adjNo, deltaQty: input.deltaQty, notes: input.notes }), TERMINAL_ID + ":adjustment:" + input.adjNo, BRANCH_ID, TERMINAL_ID, isoNow()].map(sqlText).join(", ")});
+COMMIT;
+`);
+    await refreshCounts();
+    patchSync({ writeCount: syncState().writeCount + 1 });
+  });
 }

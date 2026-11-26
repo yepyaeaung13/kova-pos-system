@@ -34,22 +34,25 @@ export const stockItems: StockItem[] = [
 export interface Supplier {
   id: string;
   name: string;
-  contact: string;
+  contact_name: string;
   phone: string;
-  leadDays: number;
+  lead_days: number;
   rating: number;
-  lastDelivery: string;
+  last_delivery: string;
   payable: number;
   audit: "Verified" | "Due" | "Overdue";
   items: number;
+  ntn_tax_id?: string;
+  payment_terms?: string;
+  updated_at?: string;
 }
 
 export const suppliers: Supplier[] = [
-  { id: "sup-1", name: "Café Imports", contact: "Imran Sheikh", phone: "+92 300 2211334", leadDays: 3, rating: 4.8, lastDelivery: "Nov 22", payable: 1840.0, audit: "Verified", items: 8 },
-  { id: "sup-2", name: "Nestlé Dairy", contact: "Adeel Raza", phone: "+92 321 7788990", leadDays: 1, rating: 4.6, lastDelivery: "Today", payable: 620.5, audit: "Due", items: 6 },
-  { id: "sup-3", name: "Golden Crumb", contact: "Nida Aslam", phone: "+92 333 4455661", leadDays: 2, rating: 4.9, lastDelivery: "Nov 23", payable: 0, audit: "Verified", items: 12 },
-  { id: "sup-4", name: "Bar Essentials", contact: "Kamran Ali", phone: "+92 345 1122345", leadDays: 5, rating: 4.1, lastDelivery: "Nov 15", payable: 2140.0, audit: "Overdue", items: 9 },
-  { id: "sup-5", name: "EcoPack", contact: "Sadaf Iqbal", phone: "+92 302 6677889", leadDays: 4, rating: 4.4, lastDelivery: "Nov 18", payable: 980.0, audit: "Verified", items: 5 },
+  { id: "sup-1", name: "Café Imports", contact_name: "Imran Sheikh", phone: "+92 300 2211334", lead_days: 3, rating: 4.8, last_delivery: "Nov 22", payable: 1840.0, audit: "Verified", items: 8 },
+  { id: "sup-2", name: "Nestlé Dairy", contact_name: "Adeel Raza", phone: "+92 321 7788990", lead_days: 1, rating: 4.6, last_delivery: "Today", payable: 620.5, audit: "Due", items: 6 },
+  { id: "sup-3", name: "Golden Crumb", contact_name: "Nida Aslam", phone: "+92 333 4455661", lead_days: 2, rating: 4.9, last_delivery: "Nov 23", payable: 0, audit: "Verified", items: 12 },
+  { id: "sup-4", name: "Bar Essentials", contact_name: "Kamran Ali", phone: "+92 345 1122345", lead_days: 5, rating: 4.1, last_delivery: "Nov 15", payable: 2140.0, audit: "Overdue", items: 9 },
+  { id: "sup-5", name: "EcoPack", contact_name: "Sadaf Iqbal", phone: "+92 302 6677889", lead_days: 4, rating: 4.4, last_delivery: "Nov 18", payable: 980.0, audit: "Verified", items: 5 },
 ];
 
 export type GrnStatus = "Posted" | "Draft" | "Disputed";
@@ -166,20 +169,26 @@ export const purchaseOrders: PurchaseOrder[] = [
 ];
 
 export interface Adjustment {
-  number: string;
-  items: number;
+  adj_no: string;
+  branch_id: string;
+  item_id: string;
   reason: "Waste" | "Spillage" | "Expiry" | "Count correction";
-  value: number;
-  by: string;
-  date: string;
+  delta_qty: number;
+  notes?: string;
+  created_at: string;
   status: "Posted" | "Draft";
+  number?: string;
+  items?: number;
+  value?: number;
+  by?: string;
+  date?: string;
 }
 
 export const adjustments: Adjustment[] = [
-  { number: "ADJ-2026-0061", items: 2, reason: "Waste", value: -42.8, by: "Sara Ahmed", date: "Today · 8:20 AM", status: "Posted" },
-  { number: "ADJ-2026-0060", items: 1, reason: "Expiry", value: -18.4, by: "Usman Tariq", date: "Yesterday · 7:05 PM", status: "Posted" },
-  { number: "ADJ-2026-0059", items: 4, reason: "Count correction", value: 26.1, by: "Sara Ahmed", date: "Nov 23 · 9:10 AM", status: "Posted" },
-  { number: "ADJ-2026-0058", items: 2, reason: "Spillage", value: -9.6, by: "Adeel Raza", date: "Nov 22 · 4:40 PM", status: "Draft" },
+  { adj_no: "ADJ-2026-0061", branch_id: "BR-01", item_id: "ITEM-001", reason: "Waste", items: 2, delta_qty: -42.8, notes: undefined, created_at: "Today · 8:20 AM", status: "Posted" },
+  { adj_no: "ADJ-2026-0060", branch_id: "BR-01", item_id: "ITEM-002", reason: "Expiry", items: 1, delta_qty: -18.4, notes: undefined, created_at: "Yesterday · 7:05 PM", status: "Posted" },
+  { adj_no: "ADJ-2026-0059", branch_id: "BR-01", item_id: "ITEM-003", reason: "Count correction", items: 4, delta_qty: 26.1, notes: undefined, created_at: "Nov 23 · 9:10 AM", status: "Posted" },
+  { adj_no: "ADJ-2026-0058", branch_id: "BR-01", item_id: "ITEM-004", reason: "Spillage", items: 2, delta_qty: -9.6, notes: undefined, created_at: "Nov 22 · 4:40 PM", status: "Draft" },
 ];
 
 export interface Transfer {

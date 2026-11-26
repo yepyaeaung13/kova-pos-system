@@ -80,10 +80,21 @@ outbox — the flow in the export's `SQLITE_DDL_SYNC_API_SPEC.md`.
 - **The accounting overview** reads the same rows: payables due this week from
   `acc_vendor_bills` (session receipts included), the recent journal from posted
   entries, and the close checklist's bank count from `acc_bank_lines`.
-- **Manual journal entries** (General journal → New entry) pick a debit and a
-  credit account, check they differ, and post a balanced entry in one
-  transaction. Balances move by account type — a debit grows assets/expenses, a
-  credit grows liabilities/equity/revenue — and the entry is queued for sync.
+- **Manual journal entries** (General journal → New entry) are a line grid: type
+  an amount in the debit and/or credit column of any account and the drawer
+  keeps running debit, credit and difference totals. Posting needs at least one
+  line on each side and equal totals; every line then moves its balance by
+  account type in one transaction, and the entry is queued for sync.
+- **Journal drafts** save the same lines without touching balances
+  (`status = Draft`, queued as an INSERT). The Draft tab lists them; posting
+  either from its row or with “Post draft” flips the status, moves the balances
+  and queues an UPDATE in one transaction.
+- **Discard and reverse** — a draft row can be discarded, removing its header
+  and lines and queueing a DELETE. A posted row can be reversed with a mirror
+  entry whose debits and credits swap; the original stays in the ledger, so the
+  pair nets to zero and the audit trail is intact.
+- **Amend a saved draft** — open it from the Draft grid, change its lines or
+  memo, and it updates the sqlite row and the in‑memory list without a reload.
 - **Schema:** `src/db/schema.ts` holds the spec's migrations — sync
   infrastructure, sale/POS, inventory, accounting — plus a `pos_products` read
   model so the menu works offline. Money is integer cents; ids are client-side

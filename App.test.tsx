@@ -354,6 +354,21 @@ test("a stock item drawer shows its ledger and par controls", async () => {
   expect(has(app, "Adjust stock")).toBe(true);
 });
 
+test("suppliers are loaded from sqlite", async () => {
+  const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
+
+  await app.press("INV");
+  await app.press("Stock items");
+  await app.press("Recipes & BOM");
+  await app.press("Goods received");
+  await app.press("Purchase orders >> nth=0");
+  await app.press("Adjustments");
+  await app.press("Transfers");
+  await app.press("Suppliers & audits");
+  expect(has(app, "Active suppliers")).toBe(true);
+  expect(has(app, "Café Imports")).toBe(true);
+});
+
 test("a stock adjustment is posted and listed", async () => {
   const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
 
@@ -545,14 +560,119 @@ test("a manual journal entry posts and balances", async () => {
   await app.press("New entry");
   expect(has(app, "New journal entry")).toBe(true);
 
-  await app.press("label:Debit 1200");
-  await app.press("label:Credit 1010");
-  await app.type("label:Amount", "250");
+  await app.type("label:Debit 1200", "250");
+  await app.type("label:Credit 1010", "250");
   await app.type("label:Description", "Stock correction");
+  expect(has(app, "Balanced")).toBe(true);
   await app.press("label:Post entry");
 
   expect(has(app, "Journal entry posted · JE-2026-0419 · $250.00")).toBe(true);
   expect(has(app, "Stock correction")).toBe(true);
   expect(has(app, "1200 Inventory")).toBe(true);
   expect(has(app, "1010 Bank · Meezan current")).toBe(true);
+});
+
+test("a multi-line journal entry splits one credit across debits", async () => {
+  const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
+
+  await app.press("ACC");
+  await app.press("General journal");
+  await app.press("New entry");
+
+  // Two debits split a single bank credit; the drawer must call it balanced.
+  await app.type("label:Debit 1000", "60");
+  await app.type("label:Debit 1020", "40");
+  await app.type("label:Credit 1010", "100");
+  await app.type("label:Description", "Cash and card split");
+  expect(has(app, "Balanced")).toBe(true);
+
+  await app.press("label:Post entry");
+  const posted = app.texts().find((text) => text.startsWith("Journal entry posted · ")) ?? "";
+  expect(posted.includes("$100.00")).toBe(true);
+  expect(has(app, "Cash and card split")).toBe(true);
+  expect(has(app, "1000 Cash on hand + 1020 Card settlements receivable")).toBe(true);
+  expect(has(app, "1010 Bank · Meezan current")).toBe(true);
+});
+
+test("a draft can be edited after it is saved", async () => {
+  const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
+
+  await app.press("ACC");
+  await app.press("General journal");
+  await app.press("New entry");
+  await app.type("label:Debit 1200", "100");
+  await app.type("label:Credit 1010", "100");
+  await app.type("label:Description", "Original description");
+  await app.press("label:Save draft");
+  const saved = app.texts().find((text) => text.startsWith("Draft saved · ")) ?? "";
+  const draftRef = saved.slice("Draft saved · ".length);
+  expect(has(app, "Draft saved · " + draftRef)).toBe(true);
+
+  // Reopen the draft from its row and change the memo and amounts.
+  await app.press("label:Edit " + draftRef);
+  await app.wait(800);
+  await app.type("label:Debit 1200", "150");
+  await app.type("label:Credit 1010", "150");
+  await app.type("label:Description", "Edited description");
+  await app.press("label:Save draft");
+  expect(has(app, "Draft updated · " + draftRef)).toBe(true);
+  expect(has(app, "Edited description")).toBe(true);
+
+  // Post the amended draft - the ref stays the same (JE-2026-0419).
+  await app.press("label:Post " + draftRef);
+  expect(has(app, "Journal entry posted · " + draftRef)).toBe(true);
+  expect(has(app, "Edited description")).toBe(true);
+});
+
+test("a journal draft is saved and then posted", async () => {
+  const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
+
+  await app.press("ACC");
+  await app.press("General journal");
+  await app.press("New entry");
+  await app.type("label:Debit 1200", "180");
+  await app.type("label:Credit 1010", "180");
+  await app.type("label:Description", "Month-end accrual");
+  await app.press("label:Save draft");
+
+  expect(has(app, "Draft saved · JE-2026-04")).toBe(true);
+  expect(has(app, "Month-end accrual")).toBe(true);
+
+  // Posting the draft from its row clears it from the draft queue.
+  const saved = app.texts().find((text) => text.startsWith("Draft saved · ")) ?? "";
+  const ref = saved.slice("Draft saved · ".length);
+  await app.press("label:Post " + ref);
+  expect(has(app, "Journal entry posted · " + ref)).toBe(true);
+  expect(has(app, "Draft saved · " + ref)).toBe(false);
+});
+
+test("a draft can be discarded and a posted entry reversed", async () => {
+  const app = await open("./App.tsx", { width: 1440, height: 900, platform: "windows" });
+
+  await app.press("ACC");
+  await app.press("General journal");
+
+  // Save a draft, then discard it from its row.
+  await app.press("New entry");
+  await app.type("label:Debit 1200", "75");
+  await app.type("label:Credit 1010", "75");
+  await app.type("label:Description", "Temp accrual");
+  await app.press("label:Save draft");
+  const saved = app.texts().find((text) => text.startsWith("Draft saved · ")) ?? "";
+  const draftRef = saved.slice("Draft saved · ".length);
+  await app.press("label:Discard " + draftRef);
+  expect(has(app, "Draft discarded · " + draftRef)).toBe(true);
+  expect(has(app, "Temp accrual")).toBe(false);
+
+  // Post a fresh entry, then reverse it with a mirror entry.
+  await app.press("New entry");
+  await app.type("label:Debit 1200", "40");
+  await app.type("label:Credit 1010", "40");
+  await app.type("label:Description", "Misfiled purchase");
+  await app.press("label:Post entry");
+  const posted = app.texts().find((text) => text.startsWith("Journal entry posted · ")) ?? "";
+  const postedRef = posted.slice("Journal entry posted · ".length).split(" · ")[0];
+  await app.press("label:Reverse " + postedRef);
+  expect(has(app, "Reversal posted · JE-2026-")).toBe(true);
+  expect(has(app, "Reversal of " + postedRef)).toBe(true);
 });
