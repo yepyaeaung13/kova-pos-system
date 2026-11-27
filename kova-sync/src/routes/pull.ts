@@ -23,9 +23,13 @@ export const pullRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: SyncPullResponseSchema },
       },
     },
-    async (req) => {
+    async (req, reply) => {
       const tenantId = String(req.headers['x-tenant-id'] ?? '');
       const branchId = String(req.headers['x-branch-id'] ?? '');
+      if (!tenantId || !branchId) {
+        return reply.code(400).send({ message: 'Missing x-tenant-id or x-branch-id header' } as never);
+      }
+
       const { cursor, limit } = req.query as PullQuery;
 
       const rows = await db

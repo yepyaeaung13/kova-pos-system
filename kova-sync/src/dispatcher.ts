@@ -60,6 +60,7 @@ export async function dispatchToDomainService(
         branchId,
         idempotencyKey: mutation.idempotencyKey,
         entityId: mutation.entityId,
+        operation: mutation.operation,
         payload: mutation.payload,
       }),
     });

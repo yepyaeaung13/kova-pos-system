@@ -18,7 +18,7 @@ app.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   app.log.info(`kova-auth listening on :${PORT}`);
 });
 
-process.on('unhandledRejection', (err) => {
+process.on('unhandledRejection', (err: unknown) => {
   console.error(err);
   process.exit(1);
 });

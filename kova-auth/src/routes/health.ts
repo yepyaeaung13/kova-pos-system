@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
+import { getJwksJson } from '../jwt.js';
 
 export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<TypeBoxTypeProvider>();
@@ -16,4 +17,6 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       return { status: 'ok' };
     }
   );
+
+  app.get('/.well-known/jwks.json', async () => getJwksJson());
 };

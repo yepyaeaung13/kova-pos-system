@@ -14,6 +14,7 @@ export interface DatabaseSchema {
   };
   branch_changelog: {
     seq?: number;
+    idempotency_key: string;
     tenant_id: string;
     branch_id: string;
     service_name: 'sale' | 'inventory' | 'accounting';

@@ -972,6 +972,17 @@ export async function refundInvoice(
     method: input.method,
     reason: input.reason,
     full,
+    entry_id: jeId,
+    entry_no: jeNo,
+    lines: [
+      { account_code: "4000", debit_cents: netShare, credit_cents: 0 },
+      { account_code: "2100", debit_cents: taxShare, credit_cents: 0 },
+      {
+        account_code: balanceAccount.replace(/^acct_/, ""),
+        debit_cents: 0,
+        credit_cents: amount,
+      },
+    ],
   };
 
   await withWrite(async () => {
@@ -1031,6 +1042,97 @@ export async function voidInvoice(invoiceNo: string): Promise<boolean> {
   if (!invoice) return false;
   const now = isoNow();
 
+  const saleEntry = await query<{ id: string }>(
+    "SELECT id FROM acc_journal_entries WHERE source_type = 'sale' AND source_id = " +
+      sqlText(invoice.id) +
+      " ORDER BY posted_at DESC LIMIT 1;",
+  );
+  const originalLines = saleEntry[0]
+    ? await query<{ account_id: string; code: string; debit_cents: number; credit_cents: number }>(
+        "SELECT l.account_id, a.code, l.debit_cents, l.credit_cents " +
+          "FROM acc_journal_lines l JOIN acc_accounts a ON a.id = l.account_id " +
+          "WHERE l.entry_id = " +
+          sqlText(saleEntry[0].id) +
+          ";",
+      )
+    : [];
+
+  // A void reverses the original posting, so the ledger (local and server)
+  // does not keep revenue from a sale that no longer stands.
+  const reversal = originalLines
+    .map((line) => ({
+      accountId: line.account_id,
+      accountCode: line.code.replace(/^acct_/, ""),
+      debitCents: Math.round(Number(line.credit_cents)),
+      creditCents: Math.round(Number(line.debit_cents)),
+    }))
+    .filter((line) => line.debitCents > 0 || line.creditCents > 0);
+
+  const voidJeNo =
+    "JE-" + new Date(now).getFullYear() + "-" + String(counters.je + 1).padStart(4, "0");
+  const voidJeId = "JE_" + voidJeNo.slice(3);
+  if (reversal.length > 0) counters.je += 1;
+
+  const reversalLineSql = reversal
+    .map(
+      (line) =>
+        "(" +
+        [rowId("jl"), voidJeId, line.accountId, String(line.debitCents), String(line.creditCents)]
+          .map(sqlText)
+          .join(", ") +
+        ")",
+    )
+    .join(",\n");
+  const balanceSql = reversal
+    .map(
+      (line) =>
+        "UPDATE acc_accounts SET balance_cents = balance_cents - " +
+        (line.debitCents + line.creditCents) +
+        " WHERE id = " +
+        sqlText(line.accountId) +
+        ";",
+    )
+    .join("\n");
+  const reversalSql =
+    reversal.length === 0
+      ? ""
+      : `
+INSERT INTO acc_journal_entries (id, entry_no, branch_id, source_type, source_id, memo, posted_at) VALUES (
+  ${[voidJeId, voidJeNo, BRANCH_ID, "void", invoice.id, "Void " + invoiceNo, now]
+    .map(sqlText)
+    .join(", ")}
+);
+INSERT INTO acc_journal_lines (id, entry_id, account_id, debit_cents, credit_cents) VALUES
+${reversalLineSql};
+${balanceSql}
+UPDATE sync_terminal_config SET value = ${sqlText(String(counters.je))} WHERE key = 'next_je_seq';
+INSERT INTO sync_outbox (id, service_name, entity_type, entity_id, operation, payload_json, idempotency_key, branch_id, terminal_id, created_at)
+VALUES (${[
+        ulid(),
+        "accounting",
+        "journal_entry",
+        voidJeId,
+        "INSERT",
+        JSON.stringify({
+          entry_no: voidJeNo,
+          source_type: "void",
+          source_id: invoice.id,
+          memo: "Void " + invoiceNo,
+          lines: reversal.map((line) => ({
+            account_code: line.accountCode,
+            debit_cents: line.debitCents,
+            credit_cents: line.creditCents,
+          })),
+        }),
+        TERMINAL_ID + ":journal_entry:" + voidJeNo,
+        BRANCH_ID,
+        TERMINAL_ID,
+        now,
+      ]
+        .map(sqlText)
+        .join(", ")});
+`;
+
   await withWrite(async () => {
     await exec(`
 BEGIN IMMEDIATE;
@@ -1051,6 +1153,7 @@ VALUES (${[
     ]
       .map(sqlText)
       .join(", ")});
+${reversalSql}
 COMMIT;
 `);
     await refreshCounts();

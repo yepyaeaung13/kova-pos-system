@@ -24,9 +24,13 @@ export const pushRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: SyncPushResponseSchema },
       },
     },
-    async (req) => {
+    async (req, reply) => {
       const tenantId = String(req.headers['x-tenant-id'] ?? '');
       const branchId = String(req.headers['x-branch-id'] ?? '');
+      if (!tenantId || !branchId) {
+        return reply.code(400).send({ message: 'Missing x-tenant-id or x-branch-id header' } as never);
+      }
+
       const { mutations } = req.body as PushBody;
       const results: SyncPushResponse['results'] = [];
 
@@ -42,7 +46,7 @@ export const pushRoutes: FastifyPluginAsync = async (fastify) => {
           results.push({
             outboxId: m.outboxId,
             status: existing.result_status as 'acked' | 'conflict' | 'rejected',
-            serverSeq: existing.server_seq ? Number(existing.server_seq) : undefined,
+            serverSeq: existing.server_seq != null ? Number(existing.server_seq) : undefined,
           });
           continue;
         }
@@ -51,36 +55,51 @@ export const pushRoutes: FastifyPluginAsync = async (fastify) => {
         const dispatchOutcome = await dispatchToDomainService(tenantId, branchId, m);
 
         let serverSeq: number | undefined;
-        if (dispatchOutcome.status === 'acked') {
-          const seqRes = await db
-            .insertInto('branch_changelog')
+        await db.transaction().execute(async (trx) => {
+          if (dispatchOutcome.status === 'acked') {
+            const seqRes = await trx
+              .insertInto('branch_changelog')
+              .values({
+                idempotency_key: m.idempotencyKey,
+                tenant_id: tenantId,
+                branch_id: branchId,
+                service_name: dispatchOutcome.serviceName,
+                entity_type: m.entityType,
+                entity_id: m.entityId,
+                operation: m.operation,
+                data: m.payload,
+              })
+              .onConflict((oc) => oc.column('idempotency_key').doNothing())
+              .returning('seq')
+              .executeTakeFirst();
+
+            if (seqRes?.seq != null) {
+              serverSeq = Number(seqRes.seq);
+            } else {
+              const prior = await trx
+                .selectFrom('branch_changelog')
+                .select('seq')
+                .where('idempotency_key', '=', m.idempotencyKey)
+                .executeTakeFirst();
+              serverSeq = prior?.seq != null ? Number(prior.seq) : undefined;
+            }
+          }
+
+          // 3. Record idempotency outcome
+          await trx
+            .insertInto('processed_mutations')
             .values({
+              idempotency_key: m.idempotencyKey,
               tenant_id: tenantId,
               branch_id: branchId,
-              service_name: dispatchOutcome.serviceName,
               entity_type: m.entityType,
               entity_id: m.entityId,
-              operation: m.operation,
-              data: m.payload,
+              result_status: dispatchOutcome.status,
+              server_seq: serverSeq ?? null,
             })
-            .returning('seq')
-            .executeTakeFirst();
-          serverSeq = seqRes ? Number(seqRes.seq) : undefined;
-        }
-
-        // 3. Record idempotency outcome
-        await db
-          .insertInto('processed_mutations')
-          .values({
-            idempotency_key: m.idempotencyKey,
-            tenant_id: tenantId,
-            branch_id: branchId,
-            entity_type: m.entityType,
-            entity_id: m.entityId,
-            result_status: dispatchOutcome.status,
-            server_seq: serverSeq ?? null,
-          })
-          .execute();
+            .onConflict((oc) => oc.column('idempotency_key').doNothing())
+            .execute();
+        });
 
         results.push({
           outboxId: m.outboxId,

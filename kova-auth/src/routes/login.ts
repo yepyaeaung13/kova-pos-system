@@ -4,7 +4,7 @@ import { Type } from '@sinclair/typebox';
 import { db } from '../db.js';
 import { signAccessJwt } from '../jwt.js';
 import { hashPassword, verifyPassword, hashPin, verifyPin } from '../crypto.js';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 const LoginRequestSchema = Type.Object({
   email: Type.String({ format: 'email' }),
@@ -64,7 +64,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<TypeBoxTypeProvider>();
 
   app.post(
-    '/api/v1/auth/login',
+    '/login',
     {
       schema: {
         body: LoginRequestSchema,
@@ -90,6 +90,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
         .select(['id', 'doc_prefix'])
         .where('device_id', '=', deviceId)
         .where('tenant_id', '=', user.tenant_id)
+        .where('branch_id', '=', user.branch_id)
         .executeTakeFirst();
 
       if (!terminal) {
@@ -105,11 +106,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       const tokenData = randomUUID() + '.' + randomUUID();
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(tokenData));
-      const tokenHash = Array.from(new Uint8Array(hashBuffer))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
+      const tokenHash = createHash('sha256').update(tokenData).digest('hex');
 
       await db
         .insertInto('refresh_tokens')
@@ -149,7 +146,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   app.post(
-    '/api/v1/auth/pin-unlock',
+    '/pin-unlock',
     {
       schema: {
         body: PinUnlockRequestSchema,
@@ -161,7 +158,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
 
       const terminal = await db
         .selectFrom('terminals')
-        .select(['id', 'branch_id', 'doc_prefix'])
+        .select(['id', 'tenant_id', 'branch_id', 'doc_prefix'])
         .where('id', '=', terminalId)
         .executeTakeFirst();
 
@@ -169,13 +166,21 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'Unknown terminal' } as never);
       }
 
-      const matched = await db
+      const candidates = await db
         .selectFrom('users')
         .select(['id', 'full_name', 'role', 'pin_hash', 'tenant_id', 'branch_id'])
+        .where('tenant_id', '=', terminal.tenant_id)
         .where('branch_id', '=', terminal.branch_id)
         .where('active', '=', true)
-        .execute()
-        .then((rows) => rows.find((s) => verifyPin(pin, s.pin_hash)));
+        .execute();
+
+      let matched: (typeof candidates)[number] | undefined;
+      for (const candidate of candidates) {
+        if (await verifyPin(pin, candidate.pin_hash)) {
+          matched = candidate;
+          break;
+        }
+      }
 
       if (!matched) {
         return reply.code(401).send({ error: 'Invalid PIN' } as never);
@@ -216,7 +221,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   app.post(
-    '/api/v1/auth/refresh',
+    '/refresh',
     {
       schema: {
         body: Type.Object({ refreshToken: Type.String() }),
@@ -229,7 +234,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
       const rt = await db
         .selectFrom('refresh_tokens')
         .select(['id', 'user_id', 'terminal_id', 'revoked_at', 'expires_at'])
-        .where('token_hash', '=', refreshToken)
+        .where('token_hash', '=', createHash('sha256').update(refreshToken).digest('hex'))
         .executeTakeFirst();
 
       if (!rt || rt.revoked_at || new Date(rt.expires_at) < new Date()) {
@@ -240,6 +245,7 @@ export const loginRoutes: FastifyPluginAsync = async (fastify) => {
         .selectFrom('users')
         .select(['id', 'tenant_id', 'branch_id', 'role'])
         .where('id', '=', rt.user_id)
+        .where('active', '=', true)
         .executeTakeFirst();
 
       if (!user) {

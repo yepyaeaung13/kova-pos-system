@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS processed_mutations (
 
 CREATE TABLE IF NOT EXISTS branch_changelog (
   seq BIGSERIAL PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
   tenant_id TEXT NOT NULL,
   branch_id TEXT NOT NULL,
   service_name TEXT NOT NULL,

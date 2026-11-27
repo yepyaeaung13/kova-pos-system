@@ -7,70 +7,128 @@ services:
     ports: ["5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./postgres/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql:ro
+      - ./postgres/init-dbs.sql:/docker-entrypoint-initdb.d/001_init-dbs.sql:ro
+      - ./postgres/bootstrap.sql:/docker-entrypoint-initdb.d/002_bootstrap.sql:ro
+      - ../kova-auth/migrations:/init/kova-auth:ro
+      - ../kova-sync/migrations:/init/kova-sync:ro
+      - ../kova-sale/migrations:/init/kova-sale:ro
+      - ../kova-inventory/migrations:/init/kova-inventory:ro
+      - ../kova-accounting/migrations:/init/kova-accounting:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kova -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   nats:
     image: nats:2.10-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222"]
+    command: ["-c", "/etc/nats/nats-server.conf", "-m", "8222"]
     ports: ["4222:4222", "8222:8222"]
     volumes:
       - nats_data:/data
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8222/healthz || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  nats-init:
+    image: kova-infra-kova-sale:latest
+    volumes:
+      - ./nats/bootstrap.mjs:/app/bootstrap.mjs:ro
+    environment:
+      NATS_URL: nats://nats:4222
+    command: ["node", "/app/bootstrap.mjs"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: "no"
 
   gateway:
     image: envoyproxy/envoy:v1.31-latest
     ports: ["8080:8080"]
     volumes:
       - ./gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro
-    depends_on: [postgres, nats]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
 
   kova-auth:
     build:
-      context: ../kova-auth
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kova-auth/Dockerfile
     ports: ["8081:8081"]
     environment:
       DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_auth
       JWT_SECRET: kova-dev-secret-change-in-production
-    depends_on: [postgres]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kova-sync:
     build:
-      context: ../kova-sync
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kova-sync/Dockerfile
     ports: ["8082:8082"]
     environment:
       DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_sync
-    depends_on: [postgres]
+      SALE_SERVICE_URL: http://kova-sale:8083
+      INVENTORY_SERVICE_URL: http://kova-inventory:8084
+      ACCOUNTING_SERVICE_URL: http://kova-accounting:8085
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kova-sale:
     build:
-      context: ../kova-sale
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kova-sale/Dockerfile
     ports: ["8083:8083"]
     environment:
       DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_sale
       NATS_URL: nats://nats:4222
-    depends_on: [postgres, nats]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      nats-init:
+        condition: service_completed_successfully
 
   kova-inventory:
     build:
-      context: ../kova-inventory
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kova-inventory/Dockerfile
     ports: ["8084:8084"]
     environment:
       DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_inventory
       NATS_URL: nats://nats:4222
-    depends_on: [postgres, nats]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      nats-init:
+        condition: service_completed_successfully
 
   kova-accounting:
     build:
-      context: ../kova-accounting
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: kova-accounting/Dockerfile
     ports: ["8085:8085"]
     environment:
       DATABASE_URL: postgres://kova:kova_dev_password@postgres:5432/kova_accounting
       NATS_URL: nats://nats:4222
-    depends_on: [postgres, nats]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      nats-init:
+        condition: service_completed_successfully
 
 volumes:
   pg_data:

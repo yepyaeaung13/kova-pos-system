@@ -50,6 +50,13 @@ export interface DatabaseSchema {
     subject: string;
     processed_at?: Date;
   };
+  processed_mutations: {
+    idempotency_key: string;
+    entity_type: string;
+    entity_id: string;
+    result_status: string;
+    processed_at?: Date;
+  };
 }
 
 const pool = new Pool({

@@ -1,4 +1,4 @@
-import process, { run } from "process";
+import process from "process";
 
 const dataDir = process.dataDir;
 
@@ -38,7 +38,7 @@ export function sqlJson(value: unknown): string {
 
 /** Runs a statement batch; rejects with the shell's message on failure. */
 export async function exec(sql: string): Promise<void> {
-  const out = await run("sqlite3", ["-bail", DB_FILE, sql], {
+  const out = await process.run("sqlite3", ["-bail", DB_FILE, sql], {
     timeoutMs: 15_000,
   });
   if (out.code !== 0) {
@@ -48,7 +48,7 @@ export async function exec(sql: string): Promise<void> {
 
 /** Runs a query and parses the shell's JSON output. */
 export async function query<T>(sql: string): Promise<T[]> {
-  const out = await run("sqlite3", ["-json", DB_FILE, sql], {
+  const out = await process.run("sqlite3", ["-json", DB_FILE, sql], {
     timeoutMs: 15_000,
   });
   if (out.code !== 0) {

@@ -27,48 +27,29 @@ npm run infra:up
 
 This boots Postgres (5 databases), NATS JetStream, Envoy gateway on :8080, and prebuilt service containers.
 
-## 3. Bootstrap NATS JetStream
+## 3. Bootstrap (automatic)
 
-```bash
-bash kova-infra/nats/init-jetstream.sh
-```
+On a fresh volume, Postgres applies every service migration and seed file, and
+the `nats-init` container creates the `KOVA_EVENTS` / `KOVA_DLQ` streams plus the
+`inv-sale-depletion` and `acc-gl-poster` durable consumers. No manual SQL or
+`init-jetstream.sh` step is needed. Recreate the volume with `npm run infra:down`
+to pick up new migrations.
 
-Creates the `KOVA_EVENTS` stream, `KOVA_DLQ` dead-letter stream, and durable consumers `inv-sale-depletion` and `acc-gl-poster`.
+Dev sign-in: `sara@kova.pk` / `counter-demo`, terminal `term_gul_01`, PIN `2468`.
 
-## 4. Run database migrations
-
-Each service has `migrations/001_init_*.sql`. Apply them to the corresponding database:
-
-```bash
-# kova-auth -> kova_auth
-psql "$DATABASE_URL_AUTH" -f kova-auth/migrations/001_init_auth.sql
-
-# kova-sync -> kova_sync
-psql "$DATABASE_URL_SYNC" -f kova-sync/migrations/001_init_sync.sql
-
-# kova-sale -> kova_sale
-psql "$DATABASE_URL_SALE" -f kova-sale/migrations/001_init_sale.sql
-
-# kova-inventory -> kova_inventory
-psql "$DATABASE_URL_INVENTORY" -f kova-inventory/migrations/001_init_inventory.sql
-
-# kova-accounting -> kova_accounting
-psql "$DATABASE_URL_ACCOUNTING" -f kova-accounting/migrations/001_init_accounting.sql
-```
-
-## 5. Build all services
+## 4. Build all services
 
 ```bash
 npm run build:all
 ```
 
-## 6. Typecheck
+## 5. Typecheck
 
 ```bash
 npm run typecheck:all
 ```
 
-## 7. Develop one service locally
+## 6. Develop one service locally
 
 Stop its container and run it with `npm run dev`:
 

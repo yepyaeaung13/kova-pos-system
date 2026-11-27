@@ -7,8 +7,8 @@ import { healthRoutes } from './routes/health.js';
 const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
 app.register(healthRoutes);
-app.register(pushRoutes, { prefix: '/api/v1/sync' });
-app.register(pullRoutes, { prefix: '/api/v1/sync' });
+app.register(pushRoutes);
+app.register(pullRoutes);
 
 const PORT = Number(process.env.PORT ?? 8082);
 
@@ -20,7 +20,7 @@ app.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
   app.log.info(`kova-sync listening on :${PORT}`);
 });
 
-process.on('unhandledRejection', (err) => {
+process.on('unhandledRejection', (err: unknown) => {
   console.error(err);
   process.exit(1);
 });

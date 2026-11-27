@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS acc_vendor_bills (
   bill_no TEXT NOT NULL,
   grn_id TEXT,
   supplier_id TEXT NOT NULL,
-  due_date TIMESTAMPTZ NOT NULL,
+  due_date TIMESTAMPTZ,
   total_cents INTEGER NOT NULL,
   paid_cents INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'Open'
@@ -49,5 +49,13 @@ CREATE TABLE IF NOT EXISTS acc_expenses (
 CREATE TABLE IF NOT EXISTS processed_events (
   event_id UUID PRIMARY KEY,
   subject TEXT NOT NULL,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS processed_mutations (
+  idempotency_key TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  result_status TEXT NOT NULL DEFAULT 'acked',
   processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

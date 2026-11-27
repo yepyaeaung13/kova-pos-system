@@ -14,10 +14,18 @@ export const invoicesRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: Type.Array(Type.Object({ id: Type.String(), docNo: Type.String(), grandTotalCents: Type.Integer() })) },
       },
     },
-    async () => {
+    async (req, reply) => {
+      const tenantId = String(req.headers['x-tenant-id'] ?? '');
+      const branchId = String(req.headers['x-branch-id'] ?? '');
+      if (!tenantId || !branchId) {
+        return reply.code(400).send({ message: 'Missing x-tenant-id or x-branch-id header' } as never);
+      }
+
       const rows = await db
         .selectFrom('sale_invoices')
         .select(['id', 'doc_no', 'grand_total_cents'])
+        .where('tenant_id', '=', tenantId)
+        .where('branch_id', '=', branchId)
         .orderBy('created_at', 'desc')
         .limit(100)
         .execute();
@@ -33,13 +41,21 @@ export const invoicesRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: Type.Object({ totalCents: Type.Integer(), count: Type.Integer() }) },
       },
     },
-    async () => {
+    async (req, reply) => {
+      const tenantId = String(req.headers['x-tenant-id'] ?? '');
+      const branchId = String(req.headers['x-branch-id'] ?? '');
+      if (!tenantId || !branchId) {
+        return reply.code(400).send({ message: 'Missing x-tenant-id or x-branch-id header' } as never);
+      }
+
       const result = await db
         .selectFrom('sale_invoices')
         .select([
           sql<number>`coalesce(sum("grand_total_cents"), 0)`.as('total'),
           sql<number>`count(*)`.as('count'),
         ])
+        .where('tenant_id', '=', tenantId)
+        .where('branch_id', '=', branchId)
         .where('payment_status', '=', 'Paid')
         .executeTakeFirst();
 

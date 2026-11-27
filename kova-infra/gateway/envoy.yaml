@@ -16,6 +16,8 @@ static_resources:
             - name: kova_backend
               domains: ["*"]
               routes:
+              - match: { prefix: "/healthz" }
+                route: { cluster: auth_service }
               - match: { prefix: "/api/v1/auth/" }
                 route: { cluster: auth_service }
               - match: { prefix: "/.well-known/jwks.json" }
@@ -30,6 +32,8 @@ static_resources:
                 route: { cluster: accounting_service }
           http_filters:
           - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
   clusters:
   - name: auth_service
     connect_timeout: 1s

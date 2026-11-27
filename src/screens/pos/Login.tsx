@@ -3,6 +3,7 @@ import { Icon } from "../../ui/Icon";
 import { Button } from "../../ui/Button";
 import { Field, TextBox } from "../../ui/Field";
 import { navigate } from "../../store";
+import { backendAuth, signInWithBackend } from "../../sync/auth";
 import { syncState } from "../../sync/state";
 
 export function LoginScreen() {
@@ -112,13 +113,18 @@ export function LoginScreen() {
             variant="primary"
             size="lg"
             iconRight="arrow_forward"
-            onPress={() => navigate("register")}
+            onPress={() => {
+              void signInWithBackend(email(), password());
+              navigate("register");
+            }}
           />
 
           <View class="flex-row items-center gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2.5">
             <Icon name="wifi_off" size={16} color="#6B5752" />
             <Text class="flex-1 font-body text-body-sm text-on-surface-variant">
-              No connection? Signing in still works offline with the cached shift.
+              {backendAuth() === "connected"
+                ? "Connected to Kova Cloud · sync token ready."
+                : "No connection? Signing in still works offline with the cached shift."}
             </Text>
           </View>
         </View>

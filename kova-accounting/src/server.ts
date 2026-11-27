@@ -1,10 +1,18 @@
 import Fastify from 'fastify';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
-import { connect, StringCodec, AckPolicy } from 'nats';
-import { Transaction } from 'kysely';
+import { connect, StringCodec } from 'nats';
+import type { Transaction } from 'kysely';
 import type { DatabaseSchema } from './db.js';
 import { db } from './db.js';
-import { validateSaleCompletedEvent, SUBJECTS } from '@kova/contracts';
+import {
+  SUBJECTS,
+  validateSaleCompletedEvent,
+  validateGrnReceivedEvent,
+  validateStockAdjustedEvent,
+} from '@kova/contracts';
+import { postJournal } from './journal.js';
+import { healthRoutes } from './routes/health.js';
+import { internalSyncRoutes } from './routes/internalSync.js';
 
 const app = Fastify({ logger: true }).withTypeProvider<TypeBoxTypeProvider>();
 
@@ -13,38 +21,8 @@ const sc = StringCodec();
 
 const PORT = Number(process.env.PORT ?? 8085);
 
-async function postJournal(
-  trx: Transaction<DatabaseSchema>,
-  branchId: string,
-  sourceType: string,
-  sourceId: string,
-  memo: string,
-  lines: Array<{ accountCode: string; debitCents: number; creditCents: number }>
-) {
-  const entryId = crypto.randomUUID();
-  const entryNo = `JE-${Date.now()}`;
-
-  await trx.insertInto('acc_journal_entries').values({
-    id: entryId,
-    entry_no: entryNo,
-    branch_id: branchId,
-    source_type: sourceType,
-    source_id: sourceId,
-    memo,
-  });
-
-  for (const l of lines) {
-    await trx.insertInto('acc_journal_lines').values({
-      id: crypto.randomUUID(),
-      entry_id: entryId,
-      account_id: (
-        await trx.selectFrom('acc_accounts').select('id').where('code', '=', l.accountCode).executeTakeFirst()
-      )!.id,
-      debit_cents: l.debitCents,
-      credit_cents: l.creditCents,
-    });
-  }
-}
+app.register(healthRoutes);
+app.register(internalSyncRoutes);
 
 async function handleSaleCompletedJournal(
   trx: Transaction<DatabaseSchema>,
@@ -59,35 +37,56 @@ async function handleSaleCompletedJournal(
     { accountCode: '2100', debitCents: 0, creditCents: evt.data.gstCents },
   ];
 
-  const debitSum = lines.reduce((s, l) => s + l.debitCents, 0);
-  const creditSum = lines.reduce((s, l) => s + l.creditCents, 0);
+  const debitSum = lines.reduce((sum, line) => sum + line.debitCents, 0);
+  const creditSum = lines.reduce((sum, line) => sum + line.creditCents, 0);
   if (debitSum !== creditSum) {
     throw new Error(`Unbalanced journal for ${evt.data.docNo}: ${debitSum} !== ${creditSum}`);
   }
 
-  await postJournal(trx, evt.branchId, evt.data.sourceType, evt.data.sourceId, `Sale ${evt.data.docNo}`, lines);
+  await postJournal(trx, evt.branchId, 'sale', evt.data.sourceId, `Sale ${evt.data.docNo}`, lines);
 }
 
 async function handleGrnReceivedJournal(
   trx: Transaction<DatabaseSchema>,
   evt: { eventId: string; subject: string; branchId: string; data: any }
 ) {
+  const { subtotalCents, taxCents, totalCents } = evt.data;
+  if (subtotalCents + taxCents !== totalCents) {
+    throw new Error(`Unbalanced GRN journal for ${evt.data.grnNo}: ${subtotalCents} + ${taxCents} !== ${totalCents}`);
+  }
+
   await postJournal(trx, evt.branchId, 'grn', evt.data.grnId, `GRN ${evt.data.grnNo}`, [
-    { accountCode: '1300', debitCents: evt.data.subtotalCents, creditCents: 0 },
-    { accountCode: '2110', debitCents: evt.data.taxCents, creditCents: 0 },
-    { accountCode: '2000', debitCents: 0, creditCents: evt.data.totalCents },
+    { accountCode: '1300', debitCents: subtotalCents, creditCents: 0 },
+    { accountCode: '2110', debitCents: taxCents, creditCents: 0 },
+    { accountCode: '2000', debitCents: 0, creditCents: totalCents },
   ]);
 
-  await trx.insertInto('acc_vendor_bills').values({
-    id: crypto.randomUUID(),
-    bill_no: evt.data.supplierInvoiceNo,
-    grn_id: evt.data.grnId,
-    supplier_id: evt.data.supplierId,
-    due_date: evt.data.dueDate ?? null,
-    total_cents: evt.data.totalCents,
-    paid_cents: 0,
-    status: 'Open',
-  });
+  await trx
+    .insertInto('acc_vendor_bills')
+    .values({
+      id: crypto.randomUUID(),
+      bill_no: evt.data.supplierInvoiceNo,
+      grn_id: evt.data.grnId,
+      supplier_id: evt.data.supplierId,
+      due_date: evt.data.dueDate ? new Date(evt.data.dueDate) : null,
+      total_cents: totalCents,
+      paid_cents: 0,
+      status: 'Open',
+    })
+    .execute();
+}
+
+function isValidEvent(subject: string, raw: unknown): boolean {
+  switch (subject) {
+    case SUBJECTS.SALE_COMPLETED:
+      return validateSaleCompletedEvent.Check(raw);
+    case SUBJECTS.INVENTORY_GRN_RECEIVED:
+      return validateGrnReceivedEvent.Check(raw);
+    case SUBJECTS.INVENTORY_STOCK_ADJUSTED:
+      return validateStockAdjustedEvent.Check(raw);
+    default:
+      return false;
+  }
 }
 
 async function start() {
@@ -103,36 +102,55 @@ async function start() {
 
   (async () => {
     for await (const msg of messages) {
-      const raw = JSON.parse(sc.decode(msg.data));
-      if (!validateSaleCompletedEvent.Check(raw)) {
-        msg.term('Invalid event schema');
+      let raw: unknown;
+      try {
+        raw = JSON.parse(sc.decode(msg.data));
+      } catch {
+        void msg.term('Invalid JSON payload');
         continue;
       }
 
-      const evt = raw;
+      if (!isValidEvent(msg.subject, raw)) {
+        void msg.term('Invalid event schema');
+        continue;
+      }
+
+      const evt = raw as { eventId: string; subject: string; branchId: string; data: any };
       try {
-        if (msg.subject === SUBJECTS.SALE_COMPLETED) {
-          const seen = await db
+        if (msg.subject !== SUBJECTS.SALE_COMPLETED && msg.subject !== SUBJECTS.INVENTORY_GRN_RECEIVED) {
+          msg.ack();
+          continue;
+        }
+
+        await db.transaction().execute(async (trx) => {
+          const seen = await trx
             .selectFrom('processed_events')
             .select('event_id')
             .where('event_id', '=', evt.eventId)
             .executeTakeFirst();
 
           if (seen) {
-            msg.ack();
-            continue;
+            return;
           }
 
-          await db.transaction().execute(async (trx) => {
+          if (msg.subject === SUBJECTS.SALE_COMPLETED) {
             await handleSaleCompletedJournal(trx, evt);
-            await trx.insertInto('processed_events').values({
+          } else {
+            await handleGrnReceivedJournal(trx, evt);
+          }
+
+          await trx
+            .insertInto('processed_events')
+            .values({
               event_id: evt.eventId,
-              subject: evt.subject,
-            });
-          });
-        }
+              subject: msg.subject,
+            })
+            .execute();
+        });
+
         msg.ack();
-      } catch {
+      } catch (err) {
+        app.log.error(err);
         msg.nak(5000);
       }
     }
@@ -144,7 +162,7 @@ start().catch((err) => {
   process.exit(1);
 });
 
-process.on('unhandledRejection', (err) => {
+process.on('unhandledRejection', (err: unknown) => {
   console.error(err);
   process.exit(1);
 });

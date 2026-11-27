@@ -121,10 +121,21 @@ The manager PIN (Settings → Shift & security, default `2468`) gates refunds,
 voids and ticket cancellation; it is stored in `sync_terminal_config`.
 
 Point it at the backend with the **Sync gateway** field in Settings (stored in
-`sync_terminal_config.gateway_url`, default `http://127.0.0.1:8080`). The worker
-sends `Authorization: Bearer …` (`auth_token`, default `demo-token`) plus
-`X-Tenant-Id` and `X-Device-Id`. `nsh.json` grants the network host it talks
-to — add the real gateway host there when the URL is known.
+`sync_terminal_config.gateway_url`, default `http://127.0.0.1:8080`). Clock in
+posts to `/api/v1/auth/login` and stores the returned token, tenant, branch and
+terminal in `sync_terminal_config`; the Login screen falls back to the cached
+shift if the gateway is unavailable. The worker sends `Authorization: Bearer …`
+(`auth_token`, default `demo-token` before first sign-in) plus `X-Tenant-Id`,
+`X-Branch-Id` and `X-Device-Id`. `nsh.json` grants the network host it talks to
+— add the real gateway host there when the URL is known.
+
+Sales, goods receipts, stock adjustments, journals, refunds and voids sync to
+the backend; refunds and voids post reversing journal entries so the server
+ledger matches the desktop. POS orders, shifts and bank-line matches stay local.
+
+The dev backend seeds one sign-in: `sara@kova.pk` / `counter-demo`, terminal
+`term_gul_01`, PIN `2468`. Start it with `npm run infra:up`; it also applies
+all service migrations, seeds the catalog/accounts and bootstraps NATS.
 
 Held tickets and the floor plan are session-scoped (a parked ticket or a seated
 table is not a sale); everything that closes a ticket does write.
@@ -149,8 +160,7 @@ Tokens live in `nsh.json` and are mirrored for canvas/SVG use in
 | Tertiary (info) | `#2F5372` |
 | Amber (warning) | `#7E5700` |
 | Plum (loyalty) | `#75376A` |
-| Display / headline | Fraunces SemiBold (bundled) → Georgia fallback |
-| Title / body / label | Work Sans (bundled) → Segoe UI fallback |
+| Display / headline / title / body / label | Inter variable (bundled) → Segoe UI fallback |
 | Radius | 6 / 10 / 12 / 16 / 24 / full |
 | Spacing step | 4pt (`p-4` = 16pt = the design's `lg`) |
 
@@ -193,6 +203,6 @@ and is not accessible, so menu artwork is a tinted panel with the item's emoji
 (`src/ui/ProductArt.tsx`). Dropping real images into `assets/products` only
 changes that one component.
 
-The backend specs shipped with the design (SQLite outbox, Fastify, NATS
-JetStream, Envoy JWT, TypeBox contracts) are not implemented here; the UI is
-built against the local-first behaviour they describe.
+The backend specs shipped with the design are implemented in the sibling
+`kova-contracts`, `kova-auth`, `kova-sync`, `kova-sale`, `kova-inventory` and
+`kova-accounting` packages. See `BUILD.md` for the dev stack.

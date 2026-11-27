@@ -2,6 +2,7 @@ import { Text, View } from "nsh";
 import { Icon } from "../ui/Icon";
 import { Avatar } from "../ui/Avatar";
 import { cashier, route, switchApp, navigate, type AppId } from "../store";
+import { backendAuth } from "../sync/auth";
 import { syncState } from "../sync/state";
 
 interface NavItem {
@@ -178,7 +179,10 @@ export function NavRail() {
           <View
             role="button"
             accessibilityLabel="Switch cashier"
-            onPress={() => navigate("login")}
+            onPress={() => {
+              backendAuth.set("idle");
+              navigate("login");
+            }}
             class="rounded-sm p-1 hover:bg-surface-container"
           >
             <Icon name="logout" size={18} color="#6B5752" />
